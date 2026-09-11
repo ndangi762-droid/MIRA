@@ -1,210 +1,163 @@
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from groq import Groq
 from dotenv import load_dotenv
-import os
-import re
-import urllib.parse
-import urllib.request
+import os, re, urllib.parse, urllib.request
 from html.parser import HTMLParser
 from collections import defaultdict, deque
 from memory import init_memory, save_memory, list_memories, delete_memory
 
 load_dotenv("backend/.env")
 load_dotenv()
-
 MODEL = os.getenv("MIRA_MODEL", "llama-3.3-70b-versatile")
-MAX_HISTORY = 4
-MAX_MEMORY_ITEMS = 4
+MAX_HISTORY = 8
 api_key = os.getenv("GROQ_API_KEY")
-
-app = FastAPI(title="MIRA", version="4.1")
+app = FastAPI(title="MIRA", version="5.0")
 origins = [x.strip() for x in os.getenv("MIRA_ALLOWED_ORIGINS", "").split(",") if x.strip()]
 app.add_middleware(CORSMiddleware, allow_origins=origins or ["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 sessions = defaultdict(lambda: deque(maxlen=MAX_HISTORY))
-
 try:
-    init_memory()
-    MEMORY_STATUS = "ready"
+    init_memory(); MEMORY_STATUS = "ready"
 except Exception:
     MEMORY_STATUS = "fallback"
 
-SYSTEM_PROMPT = """
-Tum MIRA ho, Boss ki personal AI assistant.
-- Boss ko hamesha exactly Boss kehkar bulao. Bossa ya Boss ji mat bolo.
+SYSTEM_PROMPT = """Tum MIRA ho, Boss ki personal AI assistant.
+- Boss ko hamesha exactly Boss kehkar bulao.
 - Roman Hindi + natural Indian English/Hinglish use karo. Devanagari mat use karo jab tak Boss specifically na kahe.
-- Smart, calm, friendly aur concise raho.
+- Smart, calm, friendly, practical aur concise raho.
 - Facts invent mat karo.
 - Agar LIVE WEB SEARCH RESULTS diye gaye hain to unhi ko current/latest questions ke evidence ke roop mein use karo.
-- Koi unavailable tool, browser.run, web.run ya imaginary tool call mat karo. Sirf supplied text se answer do.
+- Koi unavailable ya imaginary tool call mat karo. Sirf supplied capabilities use karo.
+- User memory ko context ke roop mein respect karo; sensitive information ko unnecessarily repeat mat karo.
 """.strip()
+
+class AskRequest(BaseModel):
+    message: str
+    session_id: str = "boss"
 
 class SearchParser(HTMLParser):
     def __init__(self):
-        super().__init__()
-        self.in_link = False
-        self.in_snippet = False
-        self.title = ""
-        self.url = ""
-        self.snippet = ""
-        self.results = []
-
+        super().__init__(); self.in_link=False; self.in_snippet=False; self.title=""; self.url=""; self.snippet=""; self.results=[]
     def handle_starttag(self, tag, attrs):
-        attrs = dict(attrs)
-        cls = attrs.get("class", "")
-        if tag == "a" and "result__a" in cls:
-            self.in_link = True
-            self.title = ""
-            self.url = attrs.get("href", "")
-        elif tag in ("a", "div") and "result__snippet" in cls:
-            self.in_snippet = True
-
+        attrs=dict(attrs); cls=attrs.get("class","")
+        if tag=="a" and "result__a" in cls:
+            self.in_link=True; self.title=""; self.url=attrs.get("href","")
+        elif tag in ("a","div") and "result__snippet" in cls: self.in_snippet=True
     def handle_endtag(self, tag):
-        if tag == "a" and self.in_link:
-            self.in_link = False
+        if tag=="a" and self.in_link:
+            self.in_link=False
             if self.title.strip():
-                self.results.append({"title": self.title.strip(), "url": self.url, "snippet": self.snippet.strip()})
-                self.snippet = ""
-        if tag == "div" and self.in_snippet:
-            self.in_snippet = False
-
+                self.results.append({"title":self.title.strip(),"url":self.url,"snippet":self.snippet.strip()}); self.snippet=""
+        if tag=="div" and self.in_snippet: self.in_snippet=False
     def handle_data(self, data):
-        if self.in_link:
-            self.title += data
-        elif self.in_snippet:
-            self.snippet += data
+        if self.in_link: self.title+=data
+        elif self.in_snippet: self.snippet+=data
 
-def _http_get(url: str, timeout: int = 7):
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 MIRA/4.1"})
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        return response.read().decode("utf-8", errors="ignore")
+def _http_get(url, timeout=7):
+    req=urllib.request.Request(url,headers={"User-Agent":"Mozilla/5.0 MIRA/5.0"})
+    with urllib.request.urlopen(req,timeout=timeout) as response: return response.read().decode("utf-8",errors="ignore")
 
-def live_search(query: str, limit: int = 5):
-    encoded = urllib.parse.urlencode({"q": query, "kl": "in-en"})
-    ddg_url = "https://html.duckduckgo.com/html/?" + encoded
+def live_search(query, limit=5):
     try:
-        html = _http_get(ddg_url, timeout=6)
-        parser = SearchParser()
-        parser.feed(html)
-        if parser.results:
-            return parser.results[:limit]
-    except Exception as exc:
-        print(f"MIRA DDG search failed: {type(exc).__name__}: {exc}", flush=True)
-
-    rss_url = "https://news.google.com/rss/search?" + urllib.parse.urlencode({
-        "q": query,
-        "hl": "en-IN",
-        "gl": "IN",
-        "ceid": "IN:en",
-    })
+        html=_http_get("https://html.duckduckgo.com/html/?"+urllib.parse.urlencode({"q":query,"kl":"in-en"}),6)
+        p=SearchParser(); p.feed(html)
+        if p.results: return p.results[:limit]
+    except Exception as exc: print(f"MIRA DDG search failed: {type(exc).__name__}: {exc}",flush=True)
     try:
-        xml = _http_get(rss_url, timeout=8)
-        items = re.findall(r"<item>(.*?)</item>", xml, flags=re.S | re.I)
-        results = []
+        xml=_http_get("https://news.google.com/rss/search?"+urllib.parse.urlencode({"q":query,"hl":"en-IN","gl":"IN","ceid":"IN:en"}),8)
+        items=re.findall(r"<item>(.*?)</item>",xml,flags=re.S|re.I); results=[]
         for item in items[:limit]:
-            title = re.search(r"<title>(.*?)</title>", item, flags=re.S | re.I)
-            link = re.search(r"<link>(.*?)</link>", item, flags=re.S | re.I)
-            pub = re.search(r"<pubDate>(.*?)</pubDate>", item, flags=re.S | re.I)
+            title=re.search(r"<title>(.*?)</title>",item,flags=re.S|re.I); link=re.search(r"<link>(.*?)</link>",item,flags=re.S|re.I); pub=re.search(r"<pubDate>(.*?)</pubDate>",item,flags=re.S|re.I)
             if title and link:
-                clean_title = re.sub(r"<[^>]+>", "", title.group(1)).strip().replace("&amp;", "&")
-                results.append({"title": clean_title, "url": link.group(1).strip(), "snippet": pub.group(1).strip() if pub else ""})
+                clean=re.sub(r"<[^>]+>","",title.group(1)).strip().replace("&amp;","&")
+                results.append({"title":clean,"url":link.group(1).strip(),"snippet":pub.group(1).strip() if pub else ""})
         return results
     except Exception as exc:
-        print(f"MIRA Google News search failed: {type(exc).__name__}: {exc}", flush=True)
-        return []
+        print(f"MIRA Google News search failed: {type(exc).__name__}: {exc}",flush=True); return []
 
-def is_live_query(text: str):
-    low = text.lower()
-    triggers = ["latest", "today", "aaj", "abhi", "current", "news", "recent", "price", "rate", "weather", "result", "update", "2026"]
+def is_live_query(text):
+    low=text.lower(); triggers=["latest","today","aaj","abhi","current","news","recent","price","rate","weather","result","update","2026"]
     return any(t in low for t in triggers)
 
-def build_messages(session_id: str, user_message: str, web_results=None):
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    if web_results:
-        evidence = []
-        for i, r in enumerate(web_results, 1):
-            evidence.append(f"[{i}] {r['title']}\nURL: {r['url']}\nSnippet: {r['snippet'][:700]}")
-        messages.append({"role": "system", "content": "LIVE WEB SEARCH RESULTS:\n\n" + "\n\n".join(evidence)[:5000]})
-    for item in list(sessions[session_id]):
-        content = str(item.get("content", ""))[:700]
-        if content:
-            messages.append({"role": item.get("role", "user"), "content": content})
-    messages.append({"role": "user", "content": user_message[:2000]})
-    return messages
-
-def explicit_memory(text: str):
-    low = text.lower()
-    for trigger in ["yaad rakho", "yaad rakhna", "remember this", "save this", "memory me save", "memory mein save"]:
-        idx = low.find(trigger)
-        if idx >= 0:
-            value = text[idx + len(trigger):].strip(" :-,.")
-            return value or None
+def explicit_memory(text):
+    low=text.lower()
+    for trigger in ["yaad rakho","yaad rakhna","remember this","save this","memory me save","memory mein save"]:
+        idx=low.find(trigger)
+        if idx>=0:
+            value=text[idx+len(trigger):].strip(" :-,."); return value or None
     return None
 
-def save_memory_from_message(session_id: str, text: str):
-    value = explicit_memory(text)
-    if value and len(value) <= 600:
-        key = "explicit_" + str(abs(hash(value)) % 100000000)
-        save_memory(session_id, key, value, "explicit")
-        return {"saved": True, "type": "explicit", "key": key}
-    return {"saved": False}
+def save_memory_from_message(session_id,text):
+    value=explicit_memory(text)
+    if value and len(value)<=600:
+        key="explicit_"+str(abs(hash(value))%100000000); save_memory(session_id,key,value,"explicit")
+        return {"saved":True,"type":"explicit","key":key}
+    return {"saved":False}
+
+def build_messages(session_id,user_message,web_results=None):
+    messages=[{"role":"system","content":SYSTEM_PROMPT}]
+    memories=list_memories(session_id,12)
+    if memories:
+        memtxt="\n".join(f"- {m['category']}: {m['value']}" for m in memories)
+        messages.append({"role":"system","content":"LONG-TERM MEMORY FOR THIS SESSION:\n"+memtxt[:5000]})
+    if web_results:
+        evidence=[]
+        for i,r in enumerate(web_results,1): evidence.append(f"[{i}] {r['title']}\nURL: {r['url']}\nSnippet: {r['snippet'][:700]}")
+        messages.append({"role":"system","content":"LIVE WEB SEARCH RESULTS:\n\n"+"\n\n".join(evidence)[:5000]})
+    for item in list(sessions[session_id]):
+        content=str(item.get("content",""))[:1200]
+        if content: messages.append({"role":item.get("role","user"),"content":content})
+    messages.append({"role":"user","content":user_message[:12000]})
+    return messages
 
 @app.get("/")
 def home():
-    return {"assistant":"MIRA","status":"ONLINE","version":"4.1","model":MODEL,"memory":MEMORY_STATUS,"web_search":"server-side search with Google News fallback","message":"Boss, MIRA online hai."}
+    return FileResponse("index.html")
+
+@app.get("/api/status")
+def status():
+    return {"assistant":"MIRA","status":"ONLINE","version":"5.0","model":MODEL,"memory":MEMORY_STATUS,"web_search":"server-side search with Google News fallback","message":"Boss, MIRA online hai."}
 
 @app.get("/health")
 def health():
-    return {"status":"ok","assistant":"MIRA","model":MODEL,"memory":MEMORY_STATUS,"version":"4.1","groq_configured":bool(api_key)}
+    return {"status":"ok","assistant":"MIRA","model":MODEL,"memory":MEMORY_STATUS,"version":"5.0","groq_configured":bool(api_key)}
+
+def run_ask(message,session_id):
+    if not api_key: raise HTTPException(status_code=503,detail="GROQ_API_KEY is not configured")
+    if not message.strip(): raise HTTPException(status_code=422,detail="Message is empty")
+    try:
+        memory_result=save_memory_from_message(session_id,message); web_results=[]; web_used=False
+        if is_live_query(message): web_results=live_search(message,5); web_used=bool(web_results)
+        client=Groq(api_key=api_key)
+        response=client.chat.completions.create(model=MODEL,messages=build_messages(session_id,message,web_results),max_tokens=1200,temperature=0.2)
+        answer=response.choices[0].message.content or "Boss, mujhe is request ka clear answer nahi mila."
+        sessions[session_id].append({"role":"user","content":message}); sessions[session_id].append({"role":"assistant","content":answer})
+        return {"assistant":"MIRA","response":answer,"model":MODEL,"memory":MEMORY_STATUS,"memory_action":memory_result,"live_web_used":web_used,"sources":[{"title":r["title"],"url":r["url"]} for r in web_results]}
+    except HTTPException: raise
+    except Exception as exc:
+        print(f"MIRA ask failed: {type(exc).__name__}: {exc}",flush=True); raise HTTPException(status_code=502,detail=f"MIRA backend error: {type(exc).__name__}") from exc
+
+@app.post("/ask")
+def ask_post(req: AskRequest): return run_ask(req.message,req.session_id)
 
 @app.get("/ask")
-def ask(message: str = Query(..., min_length=1, max_length=12000), session_id: str = Query("boss", min_length=1, max_length=100)):
-    if not api_key:
-        raise HTTPException(status_code=503, detail="GROQ_API_KEY is not configured")
-    try:
-        memory_result = save_memory_from_message(session_id, message)
-        web_results = []
-        web_used = False
-        if is_live_query(message):
-            web_results = live_search(message, 5)
-            web_used = bool(web_results)
-        client = Groq(api_key=api_key)
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=build_messages(session_id, message, web_results),
-            max_tokens=1000,
-            temperature=0.2,
-        )
-        assistant_message = response.choices[0].message
-        answer = assistant_message.content or "Boss, mujhe is request ka clear answer nahi mila."
-        sessions[session_id].append({"role":"user","content":message})
-        sessions[session_id].append({"role":"assistant","content":answer})
-        return {"assistant":"MIRA","response":answer,"model":MODEL,"memory":MEMORY_STATUS,"memory_action":memory_result,"live_web_used":web_used,"sources":[{"title":r["title"],"url":r["url"]} for r in web_results]}
-    except Exception as exc:
-        print(f"MIRA /ask failed: {type(exc).__name__}: {exc}", flush=True)
-        raise HTTPException(status_code=502, detail=f"MIRA backend error: {type(exc).__name__}") from exc
+def ask_get(message: str=Query(...,min_length=1,max_length=12000),session_id: str=Query("boss",min_length=1,max_length=100)): return run_ask(message,session_id)
 
 @app.get("/memory")
-def get_memory(session_id: str = Query("boss", min_length=1, max_length=100)):
-    return {"assistant":"MIRA","session_id":session_id,"memories":list_memories(session_id,100)}
+def get_memory(session_id: str=Query("boss",min_length=1,max_length=100)): return {"assistant":"MIRA","session_id":session_id,"memories":list_memories(session_id,100)}
 
 @app.post("/memory/save")
-def memory_save(key: str = Query(..., min_length=1, max_length=100), value: str = Query(..., min_length=1, max_length=5000), category: str = Query("general", min_length=1, max_length=50), session_id: str = Query("boss", min_length=1, max_length=100)):
-    try:
-        save_memory(session_id,key.strip(),value.strip(),category.strip())
-        return {"assistant":"MIRA","status":"saved","key":key.strip(),"category":category.strip()}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Memory error: {type(exc).__name__}") from exc
+def memory_save(key: str=Query(...,min_length=1,max_length=100),value: str=Query(...,min_length=1,max_length=5000),category: str=Query("general",min_length=1,max_length=50),session_id: str=Query("boss",min_length=1,max_length=100)):
+    try: save_memory(session_id,key.strip(),value.strip(),category.strip()); return {"assistant":"MIRA","status":"saved","key":key.strip(),"category":category.strip()}
+    except Exception as exc: raise HTTPException(status_code=500,detail=f"Memory error: {type(exc).__name__}") from exc
 
 @app.delete("/memory")
-def memory_delete(key: str = Query(..., min_length=1, max_length=100), session_id: str = Query("boss", min_length=1, max_length=100)):
-    try:
-        delete_memory(session_id,key.strip())
-        return {"assistant":"MIRA","status":"deleted","key":key.strip()}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Memory error: {type(exc).__name__}") from exc
+def memory_delete(key: str=Query(...,min_length=1,max_length=100),session_id: str=Query("boss",min_length=1,max_length=100)):
+    try: delete_memory(session_id,key.strip()); return {"assistant":"MIRA","status":"deleted","key":key.strip()}
+    except Exception as exc: raise HTTPException(status_code=500,detail=f"Memory error: {type(exc).__name__}") from exc
 
 @app.post("/reset")
-def reset(session_id: str = Query("boss", min_length=1, max_length=100)):
-    sessions.pop(session_id,None)
-    return {"assistant":"MIRA","status":"reset","session_id":session_id}
+def reset(session_id: str=Query("boss",min_length=1,max_length=100)):
+    sessions.pop(session_id,None); return {"assistant":"MIRA","status":"reset","session_id":session_id}
