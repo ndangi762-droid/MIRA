@@ -10,22 +10,16 @@ from tools import run_tool
 load_dotenv("backend/.env")
 load_dotenv()
 
-MODEL = os.getenv("MIRA_MODEL", "groq/compound")
-MAX_HISTORY = 4
-MAX_MEMORY_ITEMS = 4
-MAX_CONTEXT_CHARS = 8000
+# Compound Mini is designed for lower-latency tool use and keeps the live-web
+# request path lightweight. It still supports built-in web search.
+MODEL = os.getenv("MIRA_MODEL", "groq/compound-mini")
+MAX_HISTORY = 2
+MAX_MEMORY_ITEMS = 2
 api_key = os.getenv("GROQ_API_KEY")
 
-app = FastAPI(title="MIRA", version="2.9")
+app = FastAPI(title="MIRA", version="3.0")
 origins = [x.strip() for x in os.getenv("MIRA_ALLOWED_ORIGINS", "").split(",") if x.strip()]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins or ["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+app.add_middleware(CORSMiddleware, allow_origins=origins or ["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 sessions = defaultdict(lambda: deque(maxlen=MAX_HISTORY))
 
 try:
@@ -36,57 +30,26 @@ except Exception:
 
 SYSTEM_PROMPT = """
 Tum MIRA ho, Boss ki personal AI assistant.
-
-PERSONALITY:
-- Boss ko hamesha exactly "Boss" kehkar bulao. "Bossa", "Boss ji" ya nickname mat banao.
-- Tum female assistant ho. Natural feminine forms use karo.
+- Boss ko hamesha exactly Boss kehkar bulao. Bossa ya Boss ji mat bolo.
 - Roman Hindi + natural Indian English/Hinglish mein baat karo.
-- Devanagari Hindi mat use karo jab tak Boss specifically na kahe.
-- Smart, calm, friendly aur confident tone rakho.
-- Simple question ka simple answer do.
-
-ACCURACY:
+- Devanagari mat use karo jab tak Boss specifically na kahe.
+- Smart, calm, friendly aur concise raho.
 - Facts invent mat karo.
-- Current/latest/today/price/rate/news/weather/availability/result ke liye live web tools use karo.
+- Current/latest/today/news/price/rate/weather/availability ke liye live web search use karo.
 - Live verification na ho to guess mat karo.
-- Exact price, date, timing, address, availability ya specification assume mat karo.
-
-MEMORY:
-- Relevant long-term memory ko context ke liye use karo.
-- Clearly requested memory ko save karo.
-- Passwords, OTPs, API keys, secrets, tokens, CVV, card numbers, bank credentials, medical details ko automatic memory mein save mat karo.
-
-TOOLS:
-- Safe local tools: calculator, current_time, list_files, read_file, search_files, write_note.
-- File tools sirf MIRA workspace ke andar kaam karte hain.
-- Arbitrary shell commands, destructive actions, credential access, ya security bypass mat karo.
-- Current information ke liye Groq Compound ke built-in live web capabilities use karo.
+- Relevant saved memory use karo, lekin secrets, OTPs, API keys, passwords, tokens, CVV, bank credentials ya medical details automatic memory mein save mat karo.
+- Safe local tools available hain: calculator, current_time, list_files, read_file, search_files, write_note.
 """.strip()
 
 
 def build_messages(session_id: str, user_message: str):
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-
-    memories = list_memories(session_id, MAX_MEMORY_ITEMS)
-    if memories:
-        lines = []
-        for m in memories:
-            value = str(m.get("value", ""))[:400]
-            lines.append(f"- [{m.get('category', 'general')}] {m.get('key', '')}: {value}")
-        messages.append({"role": "system", "content": "Saved memory:\n" + "\n".join(lines)})
-
-    for item in list(sessions[session_id]):
-        content = str(item.get("content", ""))[:700]
-        if content:
-            messages.append({"role": item.get("role", "user"), "content": content})
-
-    messages.append({"role": "user", "content": user_message[:2000]})
-
-    total = sum(len(str(m.get("content", ""))) for m in messages)
-    while total > MAX_CONTEXT_CHARS and len(messages) > 2:
-        removed = messages.pop(1)
-        total -= len(str(removed.get("content", "")))
-    return messages
+    # For Compound's live-web path, deliberately send only the essential prompt
+    # and current question. This prevents accumulated memory/history from ever
+    # causing an upstream request-size failure.
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": user_message[:2000]},
+    ]
 
 
 def extract_tool_info(message):
@@ -138,55 +101,33 @@ def save_memory_from_message(session_id: str, text: str):
 
 
 def call_compound(client, messages):
-    try:
-        return client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            search_settings={"country": "india"},
-        )
-    except Exception as first_error:
-        print(f"MIRA Compound request failed: {type(first_error).__name__}: {first_error}", flush=True)
-        raise first_error
+    # Do not add search_settings here. Compound decides when web search is
+    # appropriate, and the smallest possible request is the most reliable path.
+    return client.chat.completions.create(model=MODEL, messages=messages)
 
 
 @app.get("/")
 def home():
-    return {
-        "assistant":"MIRA", "status":"ONLINE", "version":"2.9", "model":MODEL,
-        "memory":MEMORY_STATUS,
-        "tools":["web_search","visit_website","code_execution","wolfram_alpha","calculator","current_time","list_files","read_file","search_files","write_note"],
-        "message":"Boss, MIRA online hai."
-    }
+    return {"assistant":"MIRA", "status":"ONLINE", "version":"3.0", "model":MODEL, "memory":MEMORY_STATUS, "tools":["web_search","visit_website","code_execution","wolfram_alpha","calculator","current_time","list_files","read_file","search_files","write_note"], "message":"Boss, MIRA online hai."}
 
 
 @app.get("/health")
 def health():
-    return {"status":"ok", "assistant":"MIRA", "model":MODEL, "memory":MEMORY_STATUS, "version":"2.9", "groq_configured":bool(api_key)}
+    return {"status":"ok", "assistant":"MIRA", "model":MODEL, "memory":MEMORY_STATUS, "version":"3.0", "groq_configured":bool(api_key)}
 
 
 @app.get("/tools")
 def tools():
-    return {"assistant":"MIRA", "safe_tools":[
-        {"name":"calculator","permission":"READ"},
-        {"name":"current_time","permission":"READ"},
-        {"name":"list_files","permission":"READ"},
-        {"name":"read_file","permission":"READ"},
-        {"name":"search_files","permission":"READ"},
-        {"name":"write_note","permission":"WRITE"},
-    ], "dangerous_shell":"DENIED"}
+    return {"assistant":"MIRA", "safe_tools":[{"name":"calculator","permission":"READ"},{"name":"current_time","permission":"READ"},{"name":"list_files","permission":"READ"},{"name":"read_file","permission":"READ"},{"name":"search_files","permission":"READ"},{"name":"write_note","permission":"WRITE"}], "dangerous_shell":"DENIED"}
 
 
 @app.post("/tool")
 def tool(name: str = Query(..., min_length=1, max_length=50), expression: str = Query("", max_length=1000), filename: str = Query("", max_length=500), content: str = Query("", max_length=50000), query: str = Query("", max_length=500)):
     try:
-        if name == "calculator":
-            return run_tool(name, expression=expression)
-        if name == "read_file":
-            return run_tool(name, filename=filename)
-        if name == "write_note":
-            return run_tool(name, filename=filename, content=content)
-        if name == "search_files":
-            return run_tool(name, query=query)
+        if name == "calculator": return run_tool(name, expression=expression)
+        if name == "read_file": return run_tool(name, filename=filename)
+        if name == "write_note": return run_tool(name, filename=filename, content=content)
+        if name == "search_files": return run_tool(name, query=query)
         return run_tool(name)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="File not found in MIRA workspace")
