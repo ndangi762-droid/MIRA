@@ -14,7 +14,7 @@ MODEL = os.getenv("MIRA_MODEL", "groq/compound")
 MAX_HISTORY = max(2, min(int(os.getenv("MIRA_MAX_HISTORY", "12")), 40))
 api_key = os.getenv("GROQ_API_KEY")
 
-app = FastAPI(title="MIRA", version="2.4")
+app = FastAPI(title="MIRA", version="2.5")
 origins = [x.strip() for x in os.getenv("MIRA_ALLOWED_ORIGINS", "").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -127,7 +127,7 @@ def save_memory_from_message(session_id: str, text: str):
 @app.get("/")
 def home():
     return {
-        "assistant": "MIRA", "status": "ONLINE", "version": "2.4", "model": MODEL,
+        "assistant": "MIRA", "status": "ONLINE", "version": "2.5", "model": MODEL,
         "memory": MEMORY_STATUS,
         "tools": ["web_search", "visit_website", "code_execution", "wolfram_alpha", "calculator", "current_time", "list_files", "read_file", "search_files", "write_note"],
         "message": "Boss, MIRA online hai."
@@ -136,7 +136,7 @@ def home():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "assistant": "MIRA", "model": MODEL, "memory": MEMORY_STATUS, "version": "2.4", "groq_configured": bool(api_key)}
+    return {"status": "ok", "assistant": "MIRA", "model": MODEL, "memory": MEMORY_STATUS, "version": "2.5", "groq_configured": bool(api_key)}
 
 
 @app.get("/tools")
@@ -157,9 +157,9 @@ def tool(name: str = Query(..., min_length=1, max_length=50), expression: str = 
         if name == "calculator":
             return run_tool(name, expression=expression)
         if name == "read_file":
-            return run_tool(name, name=filename)
+            return run_tool(name, filename=filename)
         if name == "write_note":
-            return run_tool(name, name=filename, content=content)
+            return run_tool(name, filename=filename, content=content)
         if name == "search_files":
             return run_tool(name, query=query)
         return run_tool(name)
