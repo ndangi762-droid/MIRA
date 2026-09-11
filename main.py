@@ -10,16 +10,20 @@ from tools import run_tool
 load_dotenv("backend/.env")
 load_dotenv()
 
-app = FastAPI(title="MIRA", version="2.3")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
-
+MODEL = os.getenv("MIRA_MODEL", "groq/compound")
+MAX_HISTORY = max(2, min(int(os.getenv("MIRA_MAX_HISTORY", "12")), 40))
 api_key = os.getenv("GROQ_API_KEY")
-if not api_key:
-    raise RuntimeError("GROQ_API_KEY is not configured")
 
-client = Groq(api_key=api_key, default_headers={"Groq-Model-Version": "latest"})
-MODEL = "groq/compound"
-MAX_HISTORY = 12
+app = FastAPI(title="MIRA", version="2.4")
+origins = [x.strip() for x in os.getenv("MIRA_ALLOWED_ORIGINS", "").split(",") if x.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins or ["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 sessions = defaultdict(lambda: deque(maxlen=MAX_HISTORY))
 
 try:
@@ -47,19 +51,18 @@ ACCURACY:
 - Exact price, date, timing, address, availability ya specification assume mat karo.
 - Simple plan mein bina pooche hotel, restaurant, tourist place, booking ya transport invent mat karo.
 
-MEMORY INTELLIGENCE:
-- Long-term memory ko useful context ke liye use karo.
-- Clearly requested memory ("yaad rakho", "remember this", "save this") ko save karo.
-- Stable preferences, recurring projects, important working preferences aur persistent instructions ko high-confidence memory candidates samjho.
-- Temporary facts, one-time plans, passwords, API keys, financial credentials, health details aur other sensitive information ko automatic memory mein save mat karo.
-- User ki latest explicit instruction purani memory se priority rakhti hai.
-- Memory ko answer mein tabhi mention karo jab relevant ho.
+MEMORY:
+- Relevant long-term memory ko context ke liye use karo.
+- Clearly requested memory ko save karo.
+- Stable preferences, recurring projects, workflow preferences aur persistent instructions ko high-confidence memory candidates samjho.
+- Passwords, OTPs, API keys, secrets, tokens, CVV, card numbers, bank credentials, medical details aur other sensitive data ko automatic memory mein save mat karo.
+- Latest explicit instruction purani preference se priority rakhti hai.
 
-TOOL SYSTEM:
-- Safe local tools available hain: calculator, current_time, list_files, read_file, search_files, write_note.
+TOOLS:
+- Safe local tools: calculator, current_time, list_files, read_file, search_files, write_note.
 - File tools sirf MIRA workspace ke andar kaam karte hain.
 - Arbitrary shell commands, destructive actions, credential access, ya security bypass mat karo.
-- Web research ke liye built-in live web tools use karo.
+- Web research ke liye Compound ke live web capabilities use karo.
 """.strip()
 
 
@@ -123,14 +126,17 @@ def save_memory_from_message(session_id: str, text: str):
 
 @app.get("/")
 def home():
-    return {"assistant": "MIRA", "status": "ONLINE", "version": "2.3", "model": MODEL, "memory": MEMORY_STATUS,
-            "tools": ["web_search", "visit_website", "code_execution", "wolfram_alpha", "calculator", "current_time", "list_files", "read_file", "search_files", "write_note"],
-            "message": "Boss, MIRA online hai."}
+    return {
+        "assistant": "MIRA", "status": "ONLINE", "version": "2.4", "model": MODEL,
+        "memory": MEMORY_STATUS,
+        "tools": ["web_search", "visit_website", "code_execution", "wolfram_alpha", "calculator", "current_time", "list_files", "read_file", "search_files", "write_note"],
+        "message": "Boss, MIRA online hai."
+    }
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "assistant": "MIRA", "model": MODEL, "memory": MEMORY_STATUS, "version": "2.3"}
+    return {"status": "ok", "assistant": "MIRA", "model": MODEL, "memory": MEMORY_STATUS, "version": "2.4", "groq_configured": bool(api_key)}
 
 
 @app.get("/tools")
@@ -165,8 +171,11 @@ def tool(name: str = Query(..., min_length=1, max_length=50), expression: str = 
 
 @app.get("/ask")
 def ask(message: str = Query(..., min_length=1, max_length=12000), session_id: str = Query("boss", min_length=1, max_length=100)):
+    if not api_key:
+        raise HTTPException(status_code=503, detail="GROQ_API_KEY is not configured")
     try:
         memory_result = save_memory_from_message(session_id, message)
+        client = Groq(api_key=api_key, default_headers={"Groq-Model-Version": "latest"})
         response = client.chat.completions.create(
             model=MODEL,
             messages=build_messages(session_id, message),
@@ -176,8 +185,9 @@ def ask(message: str = Query(..., min_length=1, max_length=12000), session_id: s
         answer = assistant_message.content or "Boss, mujhe is request ka clear answer nahi mila."
         sessions[session_id].append({"role": "user", "content": message})
         sessions[session_id].append({"role": "assistant", "content": answer})
-        return {"assistant": "MIRA", "response": answer, "model": MODEL, "memory": MEMORY_STATUS,
-                "memory_action": memory_result, "live_tools_used": extract_tool_info(assistant_message)}
+        return {"assistant": "MIRA", "response": answer, "model": MODEL, "memory": MEMORY_STATUS, "memory_action": memory_result, "live_tools_used": extract_tool_info(assistant_message)}
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"MIRA backend error: {type(exc).__name__}") from exc
 
