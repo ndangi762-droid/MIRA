@@ -11,12 +11,12 @@ load_dotenv("backend/.env")
 load_dotenv()
 
 MODEL = os.getenv("MIRA_MODEL", "groq/compound")
-MAX_HISTORY = max(2, min(int(os.getenv("MIRA_MAX_HISTORY", "8")), 20))
-MAX_MEMORY_ITEMS = max(4, min(int(os.getenv("MIRA_MAX_MEMORY_ITEMS", "12")), 30))
-MAX_CONTEXT_CHARS = max(8000, min(int(os.getenv("MIRA_MAX_CONTEXT_CHARS", "24000")), 50000))
+MAX_HISTORY = 4
+MAX_MEMORY_ITEMS = 4
+MAX_CONTEXT_CHARS = 8000
 api_key = os.getenv("GROQ_API_KEY")
 
-app = FastAPI(title="MIRA", version="2.8")
+app = FastAPI(title="MIRA", version="2.9")
 origins = [x.strip() for x in os.getenv("MIRA_ALLOWED_ORIGINS", "").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -67,24 +67,21 @@ TOOLS:
 def build_messages(session_id: str, user_message: str):
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-    # Keep the prompt compact so Compound/web-search requests never become
-    # oversized because of accumulated long-term memory or chat history.
     memories = list_memories(session_id, MAX_MEMORY_ITEMS)
     if memories:
         lines = []
         for m in memories:
-            value = str(m.get("value", ""))[:1200]
+            value = str(m.get("value", ""))[:400]
             lines.append(f"- [{m.get('category', 'general')}] {m.get('key', '')}: {value}")
-        messages.append({"role": "system", "content": "Relevant saved memories:\n" + "\n".join(lines)})
+        messages.append({"role": "system", "content": "Saved memory:\n" + "\n".join(lines)})
 
     for item in list(sessions[session_id]):
-        content = str(item.get("content", ""))[:2000]
+        content = str(item.get("content", ""))[:700]
         if content:
             messages.append({"role": item.get("role", "user"), "content": content})
 
-    messages.append({"role": "user", "content": user_message[:6000]})
+    messages.append({"role": "user", "content": user_message[:2000]})
 
-    # Hard final guard on total input size.
     total = sum(len(str(m.get("content", ""))) for m in messages)
     while total > MAX_CONTEXT_CHARS and len(messages) > 2:
         removed = messages.pop(1)
@@ -148,47 +145,35 @@ def call_compound(client, messages):
             search_settings={"country": "india"},
         )
     except Exception as first_error:
-        print(f"MIRA Compound primary request failed: {type(first_error).__name__}: {first_error}", flush=True)
-        # Retry only for compatibility-style parameter errors. Do not repeat
-        # a request that the upstream service explicitly rejected as oversized.
-        error_text = str(first_error).lower()
-        if "request entity too large" in error_text or "request_too_large" in error_text:
-            raise first_error
-        try:
-            return client.chat.completions.create(
-                model=MODEL,
-                messages=messages,
-            )
-        except Exception as second_error:
-            print(f"MIRA Compound fallback failed: {type(second_error).__name__}: {second_error}", flush=True)
-            raise second_error
+        print(f"MIRA Compound request failed: {type(first_error).__name__}: {first_error}", flush=True)
+        raise first_error
 
 
 @app.get("/")
 def home():
     return {
-        "assistant": "MIRA", "status": "ONLINE", "version": "2.8", "model": MODEL,
-        "memory": MEMORY_STATUS,
-        "tools": ["web_search", "visit_website", "code_execution", "wolfram_alpha", "calculator", "current_time", "list_files", "read_file", "search_files", "write_note"],
-        "message": "Boss, MIRA online hai."
+        "assistant":"MIRA", "status":"ONLINE", "version":"2.9", "model":MODEL,
+        "memory":MEMORY_STATUS,
+        "tools":["web_search","visit_website","code_execution","wolfram_alpha","calculator","current_time","list_files","read_file","search_files","write_note"],
+        "message":"Boss, MIRA online hai."
     }
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "assistant": "MIRA", "model": MODEL, "memory": MEMORY_STATUS, "version": "2.8", "groq_configured": bool(api_key)}
+    return {"status":"ok", "assistant":"MIRA", "model":MODEL, "memory":MEMORY_STATUS, "version":"2.9", "groq_configured":bool(api_key)}
 
 
 @app.get("/tools")
 def tools():
-    return {"assistant": "MIRA", "safe_tools": [
-        {"name": "calculator", "permission": "READ"},
-        {"name": "current_time", "permission": "READ"},
-        {"name": "list_files", "permission": "READ"},
-        {"name": "read_file", "permission": "READ"},
-        {"name": "search_files", "permission": "READ"},
-        {"name": "write_note", "permission": "WRITE"},
-    ], "dangerous_shell": "DENIED"}
+    return {"assistant":"MIRA", "safe_tools":[
+        {"name":"calculator","permission":"READ"},
+        {"name":"current_time","permission":"READ"},
+        {"name":"list_files","permission":"READ"},
+        {"name":"read_file","permission":"READ"},
+        {"name":"search_files","permission":"READ"},
+        {"name":"write_note","permission":"WRITE"},
+    ], "dangerous_shell":"DENIED"}
 
 
 @app.post("/tool")
@@ -215,13 +200,13 @@ def ask(message: str = Query(..., min_length=1, max_length=12000), session_id: s
         raise HTTPException(status_code=503, detail="GROQ_API_KEY is not configured")
     try:
         memory_result = save_memory_from_message(session_id, message)
-        client = Groq(api_key=api_key, default_headers={"Groq-Model-Version": "latest"})
+        client = Groq(api_key=api_key, default_headers={"Groq-Model-Version":"latest"})
         response = call_compound(client, build_messages(session_id, message))
         assistant_message = response.choices[0].message
         answer = assistant_message.content or "Boss, mujhe is request ka clear answer nahi mila."
-        sessions[session_id].append({"role": "user", "content": message})
-        sessions[session_id].append({"role": "assistant", "content": answer})
-        return {"assistant": "MIRA", "response": answer, "model": MODEL, "memory": MEMORY_STATUS, "memory_action": memory_result, "live_tools_used": extract_tool_info(assistant_message)}
+        sessions[session_id].append({"role":"user", "content":message})
+        sessions[session_id].append({"role":"assistant", "content":answer})
+        return {"assistant":"MIRA", "response":answer, "model":MODEL, "memory":MEMORY_STATUS, "memory_action":memory_result, "live_tools_used":extract_tool_info(assistant_message)}
     except HTTPException:
         raise
     except Exception as exc:
@@ -231,14 +216,14 @@ def ask(message: str = Query(..., min_length=1, max_length=12000), session_id: s
 
 @app.get("/memory")
 def get_memory(session_id: str = Query("boss", min_length=1, max_length=100)):
-    return {"assistant": "MIRA", "session_id": session_id, "memories": list_memories(session_id, 100)}
+    return {"assistant":"MIRA", "session_id":session_id, "memories":list_memories(session_id, 100)}
 
 
 @app.post("/memory/save")
 def memory_save(key: str = Query(..., min_length=1, max_length=100), value: str = Query(..., min_length=1, max_length=5000), category: str = Query("general", min_length=1, max_length=50), session_id: str = Query("boss", min_length=1, max_length=100)):
     try:
         save_memory(session_id, key.strip(), value.strip(), category.strip())
-        return {"assistant": "MIRA", "status": "saved", "key": key.strip(), "category": category.strip()}
+        return {"assistant":"MIRA", "status":"saved", "key":key.strip(), "category":category.strip()}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Memory error: {type(exc).__name__}") from exc
 
@@ -247,7 +232,7 @@ def memory_save(key: str = Query(..., min_length=1, max_length=100), value: str 
 def memory_delete(key: str = Query(..., min_length=1, max_length=100), session_id: str = Query("boss", min_length=1, max_length=100)):
     try:
         delete_memory(session_id, key.strip())
-        return {"assistant": "MIRA", "status": "deleted", "key": key.strip()}
+        return {"assistant":"MIRA", "status":"deleted", "key":key.strip()}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Memory error: {type(exc).__name__}") from exc
 
@@ -255,4 +240,4 @@ def memory_delete(key: str = Query(..., min_length=1, max_length=100), session_i
 @app.post("/reset")
 def reset(session_id: str = Query("boss", min_length=1, max_length=100)):
     sessions.pop(session_id, None)
-    return {"assistant": "MIRA", "status": "reset", "session_id": session_id}
+    return {"assistant":"MIRA", "status":"reset", "session_id":session_id}
