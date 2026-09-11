@@ -14,7 +14,7 @@ MODEL = os.getenv("MIRA_MODEL", "groq/compound")
 MAX_HISTORY = max(2, min(int(os.getenv("MIRA_MAX_HISTORY", "12")), 40))
 api_key = os.getenv("GROQ_API_KEY")
 
-app = FastAPI(title="MIRA", version="2.5")
+app = FastAPI(title="MIRA", version="2.6")
 origins = [x.strip() for x in os.getenv("MIRA_ALLOWED_ORIGINS", "").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -62,7 +62,7 @@ TOOLS:
 - Safe local tools: calculator, current_time, list_files, read_file, search_files, write_note.
 - File tools sirf MIRA workspace ke andar kaam karte hain.
 - Arbitrary shell commands, destructive actions, credential access, ya security bypass mat karo.
-- Web research ke liye Compound ke live web capabilities use karo.
+- Web research ke liye Groq Compound ke live web capabilities use karo.
 """.strip()
 
 
@@ -127,7 +127,7 @@ def save_memory_from_message(session_id: str, text: str):
 @app.get("/")
 def home():
     return {
-        "assistant": "MIRA", "status": "ONLINE", "version": "2.5", "model": MODEL,
+        "assistant": "MIRA", "status": "ONLINE", "version": "2.6", "model": MODEL,
         "memory": MEMORY_STATUS,
         "tools": ["web_search", "visit_website", "code_execution", "wolfram_alpha", "calculator", "current_time", "list_files", "read_file", "search_files", "write_note"],
         "message": "Boss, MIRA online hai."
@@ -136,7 +136,7 @@ def home():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "assistant": "MIRA", "model": MODEL, "memory": MEMORY_STATUS, "version": "2.5", "groq_configured": bool(api_key)}
+    return {"status": "ok", "assistant": "MIRA", "model": MODEL, "memory": MEMORY_STATUS, "version": "2.6", "groq_configured": bool(api_key)}
 
 
 @app.get("/tools")
@@ -179,7 +179,12 @@ def ask(message: str = Query(..., min_length=1, max_length=12000), session_id: s
         response = client.chat.completions.create(
             model=MODEL,
             messages=build_messages(session_id, message),
-            compound_custom={"tools": {"enabled_tools": ["web_search", "visit_website", "code_interpreter", "wolfram_alpha"]}},
+            compound_custom={
+                "tools": {
+                    "enabled_tools": ["web_search", "visit_website", "code_interpreter", "wolfram_alpha"]
+                }
+            },
+            search_settings={"country": "india"},
         )
         assistant_message = response.choices[0].message
         answer = assistant_message.content or "Boss, mujhe is request ka clear answer nahi mila."
