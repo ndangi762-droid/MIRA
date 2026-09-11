@@ -14,7 +14,7 @@ MODEL = os.getenv("MIRA_MODEL", "groq/compound")
 MAX_HISTORY = max(2, min(int(os.getenv("MIRA_MAX_HISTORY", "12")), 40))
 api_key = os.getenv("GROQ_API_KEY")
 
-app = FastAPI(title="MIRA", version="2.6")
+app = FastAPI(title="MIRA", version="2.7")
 origins = [x.strip() for x in os.getenv("MIRA_ALLOWED_ORIGINS", "").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -36,7 +36,7 @@ SYSTEM_PROMPT = """
 Tum MIRA ho, Boss ki personal AI assistant.
 
 PERSONALITY:
-- Boss ko hamesha "Boss" kehkar bulao.
+- Boss ko hamesha exactly "Boss" kehkar bulao. "Bossa", "Boss ji" ya koi nickname mat banao.
 - Tum female assistant ho. Natural feminine forms use karo: "main kar sakti hoon", "bata deti hoon".
 - Roman Hindi + natural Indian English/Hinglish mein baat karo.
 - Devanagari Hindi mat use karo jab tak Boss specifically na kahe.
@@ -63,6 +63,7 @@ TOOLS:
 - File tools sirf MIRA workspace ke andar kaam karte hain.
 - Arbitrary shell commands, destructive actions, credential access, ya security bypass mat karo.
 - Web research ke liye Groq Compound ke live web capabilities use karo.
+- Jab Boss latest/current information maange, answer mein clearly batao ki information live web se verify ki gayi hai.
 """.strip()
 
 
@@ -78,7 +79,8 @@ def build_messages(session_id: str, user_message: str):
 
 
 def extract_tool_info(message):
-    return bool(getattr(message, "executed_tools", None) or [])
+    tools = getattr(message, "executed_tools", None) or []
+    return bool(tools)
 
 
 def explicit_memory(text: str):
@@ -124,10 +126,34 @@ def save_memory_from_message(session_id: str, text: str):
     return {"saved": False}
 
 
+def call_compound(client, messages):
+    # Groq Compound automatically enables its built-in tools. Keep the first
+    # request close to the official API shape for maximum compatibility.
+    try:
+        return client.chat.completions.create(
+            model=MODEL,
+            messages=messages,
+            search_settings={"country": "india"},
+        )
+    except Exception as first_error:
+        # If an SDK/account version rejects search_settings, retry with the
+        # minimal official Compound request. The original error is logged on
+        # the server without exposing credentials to the client.
+        print(f"MIRA Compound primary request failed: {type(first_error).__name__}: {first_error}", flush=True)
+        try:
+            return client.chat.completions.create(
+                model=MODEL,
+                messages=messages,
+            )
+        except Exception as second_error:
+            print(f"MIRA Compound fallback failed: {type(second_error).__name__}: {second_error}", flush=True)
+            raise second_error
+
+
 @app.get("/")
 def home():
     return {
-        "assistant": "MIRA", "status": "ONLINE", "version": "2.6", "model": MODEL,
+        "assistant": "MIRA", "status": "ONLINE", "version": "2.7", "model": MODEL,
         "memory": MEMORY_STATUS,
         "tools": ["web_search", "visit_website", "code_execution", "wolfram_alpha", "calculator", "current_time", "list_files", "read_file", "search_files", "write_note"],
         "message": "Boss, MIRA online hai."
@@ -136,7 +162,7 @@ def home():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "assistant": "MIRA", "model": MODEL, "memory": MEMORY_STATUS, "version": "2.6", "groq_configured": bool(api_key)}
+    return {"status": "ok", "assistant": "MIRA", "model": MODEL, "memory": MEMORY_STATUS, "version": "2.7", "groq_configured": bool(api_key)}
 
 
 @app.get("/tools")
@@ -176,16 +202,7 @@ def ask(message: str = Query(..., min_length=1, max_length=12000), session_id: s
     try:
         memory_result = save_memory_from_message(session_id, message)
         client = Groq(api_key=api_key, default_headers={"Groq-Model-Version": "latest"})
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=build_messages(session_id, message),
-            compound_custom={
-                "tools": {
-                    "enabled_tools": ["web_search", "visit_website", "code_interpreter", "wolfram_alpha"]
-                }
-            },
-            search_settings={"country": "india"},
-        )
+        response = call_compound(client, build_messages(session_id, message))
         assistant_message = response.choices[0].message
         answer = assistant_message.content or "Boss, mujhe is request ka clear answer nahi mila."
         sessions[session_id].append({"role": "user", "content": message})
@@ -194,6 +211,7 @@ def ask(message: str = Query(..., min_length=1, max_length=12000), session_id: s
     except HTTPException:
         raise
     except Exception as exc:
+        print(f"MIRA /ask failed: {type(exc).__name__}: {exc}", flush=True)
         raise HTTPException(status_code=502, detail=f"MIRA backend error: {type(exc).__name__}") from exc
 
 
