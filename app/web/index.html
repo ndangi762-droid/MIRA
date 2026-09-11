@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MIRA</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0b0d12;color:#f4f4f5;font-family:Arial,sans-serif}
+main{max-width:900px;margin:auto;height:100vh;display:flex;flex-direction:column;padding:24px}
+header{display:flex;align-items:center;gap:12px}.logo{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;background:#fff;color:#111;font-weight:800}
+h1{margin:0;font-size:22px}.sub{color:#8f96a3;font-size:13px}
+#chat{flex:1;overflow:auto;padding:20px 0}.msg{max-width:80%;padding:13px 16px;border-radius:16px;margin:10px 0;line-height:1.5;white-space:pre-wrap}
+.user{margin-left:auto;background:#242934}.mira{background:#151922;border:1px solid #242936}
+form{display:flex;gap:10px;padding-top:14px}input{flex:1;padding:15px;border-radius:14px;border:1px solid #2b303b;background:#12151c;color:white;outline:none}
+button{padding:0 20px;border:0;border-radius:14px;background:#fff;color:#111;font-weight:700;cursor:pointer}
+</style>
+</head>
+<body>
+<main>
+<header><div class="logo">M</div><div><h1>MIRA</h1><div class="sub">Personal AI Assistant · Local First</div></div></header>
+<section id="chat"></section>
+<form id="form"><input id="input" autocomplete="off" placeholder="Bolo Boss..." autofocus><button>Send</button></form>
+</main>
+<script>
+const chat=document.getElementById("chat"),form=document.getElementById("form"),input=document.getElementById("input");
+function add(text,cls){const d=document.createElement("div");d.className="msg "+cls;d.textContent=text;chat.appendChild(d);chat.scrollTop=chat.scrollHeight}
+add("Namaste Boss. MIRA ready hai. 🚀","mira");
+form.onsubmit=async e=>{
+ e.preventDefault();const message=input.value.trim();if(!message)return;
+ add(message,"user");input.value="";add("Thinking...","mira");const thinking=chat.lastChild;
+ try{const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message})});
+ const data=await r.json();thinking.textContent=data.reply||"Boss, response nahi mila."}
+ catch(err){thinking.textContent="Boss, server/Ollama connection check karo."}
+};
+</script>
+</body>
+</html>
