@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import os
 from collections import defaultdict, deque
 from memory import init_memory, save_memory, list_memories, delete_memory
-from tools import run_tool, list_files
+from tools import run_tool
 
 load_dotenv("backend/.env")
 load_dotenv()
@@ -56,11 +56,10 @@ MEMORY INTELLIGENCE:
 - Memory ko answer mein tabhi mention karo jab relevant ho.
 
 TOOL SYSTEM:
-- MIRA ke safe local tools available hain: calculator, current_time, list_files, read_file, search_files, write_note.
-- Tool use karne se pehle request ka scope samjho.
+- Safe local tools available hain: calculator, current_time, list_files, read_file, search_files, write_note.
 - File tools sirf MIRA workspace ke andar kaam karte hain.
 - Arbitrary shell commands, destructive actions, credential access, ya security bypass mat karo.
-- Web research ke liye built-in live web tools use karo; local file tools ko web browsing ka replacement mat samjho.
+- Web research ke liye built-in live web tools use karo.
 """.strip()
 
 
@@ -148,7 +147,6 @@ def tools():
 
 @app.post("/tool")
 def tool(name: str = Query(..., min_length=1, max_length=50), expression: str = Query("", max_length=1000), filename: str = Query("", max_length=500), content: str = Query("", max_length=50000), query: str = Query("", max_length=500)):
-    """Direct allowlisted tool endpoint. No arbitrary code/shell execution."""
     try:
         if name == "calculator":
             return run_tool(name, expression=expression)
