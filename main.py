@@ -11,10 +11,12 @@ load_dotenv("backend/.env")
 load_dotenv()
 
 MODEL = os.getenv("MIRA_MODEL", "groq/compound")
-MAX_HISTORY = max(2, min(int(os.getenv("MIRA_MAX_HISTORY", "12")), 40))
+MAX_HISTORY = max(2, min(int(os.getenv("MIRA_MAX_HISTORY", "8")), 20))
+MAX_MEMORY_ITEMS = max(4, min(int(os.getenv("MIRA_MAX_MEMORY_ITEMS", "12")), 30))
+MAX_CONTEXT_CHARS = max(8000, min(int(os.getenv("MIRA_MAX_CONTEXT_CHARS", "24000")), 50000))
 api_key = os.getenv("GROQ_API_KEY")
 
-app = FastAPI(title="MIRA", version="2.7")
+app = FastAPI(title="MIRA", version="2.8")
 origins = [x.strip() for x in os.getenv("MIRA_ALLOWED_ORIGINS", "").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -36,11 +38,10 @@ SYSTEM_PROMPT = """
 Tum MIRA ho, Boss ki personal AI assistant.
 
 PERSONALITY:
-- Boss ko hamesha exactly "Boss" kehkar bulao. "Bossa", "Boss ji" ya koi nickname mat banao.
-- Tum female assistant ho. Natural feminine forms use karo: "main kar sakti hoon", "bata deti hoon".
+- Boss ko hamesha exactly "Boss" kehkar bulao. "Bossa", "Boss ji" ya nickname mat banao.
+- Tum female assistant ho. Natural feminine forms use karo.
 - Roman Hindi + natural Indian English/Hinglish mein baat karo.
 - Devanagari Hindi mat use karo jab tak Boss specifically na kahe.
-- Hindi ko Google Translate jaisa unnatural mat banao.
 - Smart, calm, friendly aur confident tone rakho.
 - Simple question ka simple answer do.
 
@@ -49,32 +50,45 @@ ACCURACY:
 - Current/latest/today/price/rate/news/weather/availability/result ke liye live web tools use karo.
 - Live verification na ho to guess mat karo.
 - Exact price, date, timing, address, availability ya specification assume mat karo.
-- Simple plan mein bina pooche hotel, restaurant, tourist place, booking ya transport invent mat karo.
 
 MEMORY:
 - Relevant long-term memory ko context ke liye use karo.
 - Clearly requested memory ko save karo.
-- Stable preferences, recurring projects, workflow preferences aur persistent instructions ko high-confidence memory candidates samjho.
-- Passwords, OTPs, API keys, secrets, tokens, CVV, card numbers, bank credentials, medical details aur other sensitive data ko automatic memory mein save mat karo.
-- Latest explicit instruction purani preference se priority rakhti hai.
+- Passwords, OTPs, API keys, secrets, tokens, CVV, card numbers, bank credentials, medical details ko automatic memory mein save mat karo.
 
 TOOLS:
 - Safe local tools: calculator, current_time, list_files, read_file, search_files, write_note.
 - File tools sirf MIRA workspace ke andar kaam karte hain.
 - Arbitrary shell commands, destructive actions, credential access, ya security bypass mat karo.
-- Web research ke liye Groq Compound ke live web capabilities use karo.
-- Jab Boss latest/current information maange, answer mein clearly batao ki information live web se verify ki gayi hai.
+- Current information ke liye Groq Compound ke built-in live web capabilities use karo.
 """.strip()
 
 
 def build_messages(session_id: str, user_message: str):
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    memories = list_memories(session_id, 30)
+
+    # Keep the prompt compact so Compound/web-search requests never become
+    # oversized because of accumulated long-term memory or chat history.
+    memories = list_memories(session_id, MAX_MEMORY_ITEMS)
     if memories:
-        memory_text = "\n".join(f"- [{m['category']}] {m['key']}: {m['value']}" for m in memories)
-        messages.append({"role": "system", "content": "Saved long-term memories for this Boss:\n" + memory_text})
-    messages.extend(list(sessions[session_id]))
-    messages.append({"role": "user", "content": user_message})
+        lines = []
+        for m in memories:
+            value = str(m.get("value", ""))[:1200]
+            lines.append(f"- [{m.get('category', 'general')}] {m.get('key', '')}: {value}")
+        messages.append({"role": "system", "content": "Relevant saved memories:\n" + "\n".join(lines)})
+
+    for item in list(sessions[session_id]):
+        content = str(item.get("content", ""))[:2000]
+        if content:
+            messages.append({"role": item.get("role", "user"), "content": content})
+
+    messages.append({"role": "user", "content": user_message[:6000]})
+
+    # Hard final guard on total input size.
+    total = sum(len(str(m.get("content", ""))) for m in messages)
+    while total > MAX_CONTEXT_CHARS and len(messages) > 2:
+        removed = messages.pop(1)
+        total -= len(str(removed.get("content", "")))
     return messages
 
 
@@ -127,8 +141,6 @@ def save_memory_from_message(session_id: str, text: str):
 
 
 def call_compound(client, messages):
-    # Groq Compound automatically enables its built-in tools. Keep the first
-    # request close to the official API shape for maximum compatibility.
     try:
         return client.chat.completions.create(
             model=MODEL,
@@ -136,10 +148,12 @@ def call_compound(client, messages):
             search_settings={"country": "india"},
         )
     except Exception as first_error:
-        # If an SDK/account version rejects search_settings, retry with the
-        # minimal official Compound request. The original error is logged on
-        # the server without exposing credentials to the client.
         print(f"MIRA Compound primary request failed: {type(first_error).__name__}: {first_error}", flush=True)
+        # Retry only for compatibility-style parameter errors. Do not repeat
+        # a request that the upstream service explicitly rejected as oversized.
+        error_text = str(first_error).lower()
+        if "request entity too large" in error_text or "request_too_large" in error_text:
+            raise first_error
         try:
             return client.chat.completions.create(
                 model=MODEL,
@@ -153,7 +167,7 @@ def call_compound(client, messages):
 @app.get("/")
 def home():
     return {
-        "assistant": "MIRA", "status": "ONLINE", "version": "2.7", "model": MODEL,
+        "assistant": "MIRA", "status": "ONLINE", "version": "2.8", "model": MODEL,
         "memory": MEMORY_STATUS,
         "tools": ["web_search", "visit_website", "code_execution", "wolfram_alpha", "calculator", "current_time", "list_files", "read_file", "search_files", "write_note"],
         "message": "Boss, MIRA online hai."
@@ -162,7 +176,7 @@ def home():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "assistant": "MIRA", "model": MODEL, "memory": MEMORY_STATUS, "version": "2.7", "groq_configured": bool(api_key)}
+    return {"status": "ok", "assistant": "MIRA", "model": MODEL, "memory": MEMORY_STATUS, "version": "2.8", "groq_configured": bool(api_key)}
 
 
 @app.get("/tools")
