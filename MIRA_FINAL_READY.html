@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>MIRA — Neural Interface</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#030306}
+body{font-family:Arial,Helvetica,sans-serif;color:#dffcff}
+#canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+.hud{
+  position:fixed;left:50%;top:28px;transform:translateX(-50%);
+  letter-spacing:5px;font-size:12px;color:#aefaff;opacity:.82;
+  text-transform:uppercase;pointer-events:none;
+  text-shadow:0 0 12px #00eaff;
+}
+.bottom{
+  position:fixed;left:50%;bottom:24px;transform:translateX(-50%);
+  display:flex;align-items:center;gap:12px;
+}
+.status{
+  font-size:11px;letter-spacing:3px;color:#83f8ff;
+  padding:8px 14px;border:1px solid rgba(0,234,255,.28);
+  border-radius:20px;background:rgba(0,8,15,.58);
+  box-shadow:0 0 20px rgba(0,234,255,.08);
+}
+button{
+  width:42px;height:42px;border-radius:50%;
+  border:1px solid rgba(0,234,255,.45);
+  background:rgba(0,10,18,.7);color:#00eaff;cursor:pointer;
+  box-shadow:0 0 18px rgba(0,234,255,.12);
+}
+button:hover{box-shadow:0 0 28px rgba(0,234,255,.35)}
+#state{transition:.2s}
+
+/* MIRA CONTROL LAYER - FUNCTIONAL UI */
+.chat-panel{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);width:min(720px,92%);z-index:20}
+.response-box{display:none;margin-bottom:10px;padding:10px 14px;border:1px solid rgba(0,234,255,.22);border-radius:14px;background:rgba(0,8,15,.62);box-shadow:0 0 20px rgba(0,234,255,.08);font-size:13px;line-height:1.45;color:#dffcff;backdrop-filter:blur(10px)}
+.response-box.show{display:block}
+.response-label{font-size:9px;letter-spacing:3px;color:#00eaff;margin-bottom:4px}
+.input-row{display:flex;align-items:center;gap:8px}
+#message{width:min(430px,55vw);height:42px;border:1px solid rgba(0,234,255,.28);border-radius:22px;background:rgba(0,8,15,.68);color:#dffcff;outline:none;padding:0 16px;box-shadow:0 0 18px rgba(0,234,255,.08);backdrop-filter:blur(10px)}
+#message::placeholder{color:#79aab0}
+#sendBtn,#micBtn{flex:0 0 42px}
+#micBtn.active{background:rgba(0,234,255,.2);box-shadow:0 0 28px rgba(0,234,255,.5)}
+@media(max-width:600px){.chat-panel{width:94%}#message{width:auto;flex:1}.response-box{font-size:12px}}
+
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+
+
+
+<div class="chat-panel">
+  <div id="responseBox" class="response-box">
+    <div class="response-label">MIRA</div>
+    <div id="responseText"></div>
+  </div>
+  <div class="input-row">
+    <button id="micBtn" title="Voice Input">🎙</button>
+    <input id="message" type="text" autocomplete="off" placeholder="Talk to MIRA...">
+    <button id="sendBtn" title="Send">➤</button>
+  </div>
+</div>
+
+<script>
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d');
+const state=null;
+const mode=null;
+
+let W,H,DPR;
+let nodes=[], pulses=[];
+let active=true;
+let time=0;
+
+const colors=[
+  [0,234,255],
+  [105,92,255],
+  [255,88,170],
+  [255,180,70],
+  [120,255,190]
+];
+
+function resize(){
+  DPR=Math.min(devicePixelRatio||1,2);
+  W=innerWidth; H=innerHeight;
+  canvas.width=W*DPR; canvas.height=H*DPR;
+  canvas.style.width=W+'px'; canvas.style.height=H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  build();
+}
+addEventListener('resize',resize);
+
+function build(){
+  nodes=[];
+  const cx=W/2, cy=H/2;
+  const base=Math.min(W,H);
+  const clusters=11;
+
+  // central core
+  nodes.push({x:cx,y:cy,r:18,core:true,color:[0,234,255],phase:0});
+
+  for(let c=0;c<clusters;c++){
+    const a=(Math.PI*2*c/clusters)+Math.random()*.22;
+    const radius=base*(.31+Math.random()*.13);
+    const ccx=cx+Math.cos(a)*radius;
+    const ccy=cy+Math.sin(a)*radius*.72;
+    const col=colors[c%colors.length];
+    const count=7+Math.floor(Math.random()*7);
+
+    for(let j=0;j<count;j++){
+      const aa=Math.PI*2*j/count+Math.random()*.4;
+      const rr=22+Math.random()*58;
+      nodes.push({
+        x:ccx+Math.cos(aa)*rr,
+        y:ccy+Math.sin(aa)*rr,
+        r:2.5+Math.random()*4.5,
+        color:col,
+        phase:Math.random()*Math.PI*2,
+        cluster:c
+      });
+    }
+    // cluster hub
+    nodes.push({x:ccx,y:ccy,r:7+Math.random()*4,color:col,phase:Math.random()*6.28,hub:true,cluster:c});
+  }
+
+  // peripheral constellation nodes
+  const outer=34;
+  for(let i=0;i<outer;i++){
+    const a=Math.random()*Math.PI*2;
+    const rr=base*(.46+Math.random()*.28);
+    nodes.push({
+      x:cx+Math.cos(a)*rr,
+      y:cy+Math.sin(a)*rr*.66,
+      r:2+Math.random()*3,
+      color:colors[Math.floor(Math.random()*colors.length)],
+      phase:Math.random()*6.28,
+      outer:true
+    });
+  }
+  pulses=[];
+}
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
+
+function drawGlow(x,y,r,color,alpha=1){
+  const g=ctx.createRadialGradient(x,y,0,x,y,r*5);
+  g.addColorStop(0,`rgba(${color[0]},${color[1]},${color[2]},${.55*alpha})`);
+  g.addColorStop(.18,`rgba(${color[0]},${color[1]},${color[2]},${.20*alpha})`);
+  g.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=g;
+  ctx.beginPath();ctx.arc(x,y,r*5,0,Math.PI*2);ctx.fill();
+}
+
+function line(a,b,alpha){
+  const dx=b.x-a.x,dy=b.y-a.y;
+  const c={
+    x:(a.x+b.x)/2-dy*.15,
+    y:(a.y+b.y)/2+dx*.15
+  };
+  ctx.beginPath();
+  ctx.moveTo(a.x,a.y);
+  ctx.quadraticCurveTo(c.x,c.y,b.x,b.y);
+  ctx.strokeStyle=`rgba(${b.color[0]},${b.color[1]},${b.color[2]},${alpha})`;
+  ctx.lineWidth=active?1.05:.65;
+  ctx.stroke();
+  return c;
+}
+
+function addPulse(a,b,c){
+  if(Math.random()>.028*(active?3.0:1)) return;
+  pulses.push({a,b,c,t:Math.random(),speed:.0025+Math.random()*.004});
+}
+
+function animate(){
+  time+=.016;
+  ctx.clearRect(0,0,W,H);
+
+  const cx=W/2,cy=H/2;
+  const base=Math.min(W,H);
+
+  // star/particle field
+  for(let i=0;i<150;i++){
+    const driftX=Math.sin(time*.12+i*.37)*8;
+    const driftY=Math.cos(time*.10+i*.29)*7;
+    const x=((Math.sin(i*17.31)*.5+.5)*W+driftX+W)%W;
+    const y=((Math.sin(i*9.17+1.3)*.5+.5)*H+driftY+H)%H;
+    const s=0.5+(Math.sin(time*.5+i)*.5+.5)*1.2;
+    ctx.fillStyle=`rgba(210,250,255,${.12+s*.12})`;
+    ctx.fillRect(x,y,s,s);
+  }
+
+  // distant aura
+  drawGlow(cx,cy,active?55:38,[0,234,255],active?1:.7);
+
+  // connections: each node to nearby nodes + hubs + core
+  const visible=nodes.filter(n=>!n.core);
+  for(let i=0;i<visible.length;i++){
+    const a=visible[i];
+    let nearest=[];
+    for(let j=0;j<visible.length;j++){
+      if(i===j) continue;
+      const b=visible[j];
+      const d=dist(a,b);
+      if(d<155) nearest.push({b,d});
+    }
+    nearest.sort((p,q)=>p.d-q.d);
+    nearest=nearest.slice(0,3);
+
+    for(const item of nearest){
+      const b=item.b;
+      if(a.x>b.x || (a.x===b.x && a.y>b.y)) continue;
+      const c=line(a,b,active?.18:.10);
+      addPulse(a,b,c);
+    }
+
+    if(a.hub){
+      const core=nodes[0];
+      const c=line(core,a,active?.22:.13);
+      addPulse(core,a,c);
+    }
+  }
+
+  // core rings
+  for(let k=0;k<6;k++){
+    const rr=25+k*10+Math.sin(time*(1.15+k*.16)+k)*4;
+    ctx.beginPath();
+    ctx.arc(cx,cy,rr,0,Math.PI*2);
+    ctx.strokeStyle=`rgba(0,234,255,${.16-k*.025})`;
+    ctx.lineWidth=1;
+    ctx.setLineDash(k===2?[3,7]:[]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // moving energy sweep
+  ctx.save();
+  ctx.translate(cx,cy);
+  ctx.rotate(time*.55);
+  ctx.beginPath();
+  ctx.arc(0,0,72,Math.PI*.05,Math.PI*.48);
+  ctx.strokeStyle='rgba(150,255,255,.75)';
+  ctx.lineWidth=2;
+  ctx.shadowBlur=18;
+  ctx.shadowColor='#00eaff';
+  ctx.stroke();
+  ctx.restore();
+
+  // nodes
+  for(const n of nodes){
+    const drift=Math.sin(time*.72+n.phase)*5 + Math.sin(time*1.35+n.phase*1.7)*2;
+    const driftY=Math.cos(time*.61+n.phase)*4;
+    const x=n.x+drift,y=n.y+driftY;
+    const glow=n.core?active?1.4:1:n.hub?1.15:.8;
+    drawGlow(x,y,n.r*glow,n.color,.9);
+    ctx.beginPath();
+    ctx.arc(x,y,n.r*(1+(active?.10:0)*Math.sin(time*2+n.phase)),0,Math.PI*2);
+    ctx.fillStyle=`rgb(${n.color[0]},${n.color[1]},${n.color[2]})`;
+    ctx.fill();
+
+    if(n.hub){
+      ctx.beginPath();ctx.arc(x,y,n.r+5+Math.sin(time*1.7+n.phase)*2,0,Math.PI*2);
+      ctx.strokeStyle=`rgba(${n.color[0]},${n.color[1]},${n.color[2]},.28)`;
+      ctx.stroke();
+    }
+  }
+
+  // core
+  const core=nodes[0];
+  const coreR=core.r+(active?Math.sin(time*5)*4:Math.sin(time*1.8)*2);
+  const g=ctx.createRadialGradient(cx,cy,0,cx,cy,coreR*2.5);
+  g.addColorStop(0,'rgba(235,255,255,.95)');
+  g.addColorStop(.18,'rgba(0,234,255,.85)');
+  g.addColorStop(.5,'rgba(0,130,255,.28)');
+  g.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=g;ctx.beginPath();ctx.arc(cx,cy,coreR*2.5,0,Math.PI*2);ctx.fill();
+
+  // traveling synapses
+  for(let i=pulses.length-1;i>=0;i--){
+    const p=pulses[i]; p.t+=p.speed*(active?1.8:1);
+    if(p.t>=1){pulses.splice(i,1);continue}
+    const t=p.t,u=1-t;
+    const x=u*u*p.a.x+2*u*t*p.c.x+t*t*p.b.x;
+    const y=u*u*p.a.y+2*u*t*p.c.y+t*t*p.b.y;
+    drawGlow(x,y,2.5,p.b.color,1);
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(x,y,1.5,0,Math.PI*2);ctx.fill();
+  }
+
+  requestAnimationFrame(animate);
+}
+
+resize();
+animate();
+
+/* =========================================================
+   MIRA FUNCTIONALITY
+========================================================= */
+const messageInput=document.getElementById('message');
+const sendBtn=document.getElementById('sendBtn');
+const micBtn=document.getElementById('micBtn');
+const responseBox=document.getElementById('responseBox');
+const responseText=document.getElementById('responseText');
+
+function showResponse(text){
+  responseText.textContent=text;
+  responseBox.classList.add('show');
+}
+
+function isGreeting(text){
+  return /^(hello|hi|hii|hey|hello mira|hi mira|hii mira|hey mira|namaste|namaskar)$/i.test(text.trim());
+}
+
+function cleanSpeech(text){
+  return text.replace(/[*_#`]/g,'').replace(/https?:\/\/\S+/gi,'').replace(/\s+/g,' ').trim();
+}
+
+function getFemaleHindiVoice(){
+  const voices=speechSynthesis.getVoices();
+  const hindi=voices.filter(v=>/^hi(-|_)?IN/i.test(v.lang));
+  const keys=['female','woman','zira','neerja','heera','hindi female','google hindi'];
+  return hindi.find(v=>keys.some(k=>v.name.toLowerCase().includes(k))) || hindi[0] || voices.find(v=>/hindi|india|neerja|heera/i.test(v.name)) || null;
+}
+
+function speakMIRA(text){
+  if(!('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(cleanSpeech(text));
+  const voice=getFemaleHindiVoice();
+  u.lang='hi-IN';
+  u.rate=1.10;
+  u.pitch=1.0;
+  u.volume=1.0;
+  if(voice) u.voice=voice;
+  u.onstart=()=>{active=true};
+  u.onend=()=>{active=true};
+  speechSynthesis.speak(u);
+}
+
+async function askMIRA(message){
+  const text=message.trim();
+  if(!text) return;
+  if(isGreeting(text)){
+    const reply='Hello Boss! Main MIRA hoon. Aaj main aapki kaise help kar sakti hoon?';
+    showResponse(reply);
+    speakMIRA(reply);
+    return;
+  }
+  showResponse('MIRA processing...');
+  try{
+    const r=await fetch('http://127.0.0.1:8000/ask?message='+encodeURIComponent(text));
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const data=await r.json();
+    const reply=data.response || 'Boss, mujhe response nahi mila.';
+    showResponse(reply);
+    speakMIRA(reply);
+  }catch(err){
+    console.error('MIRA ERROR:',err);
+    const reply='Boss, MIRA backend se connect nahi ho pa rahi. FastAPI server check karo.';
+    showResponse(reply);
+    speakMIRA(reply);
+  }
+}
+
+function sendMessage(){
+  const text=messageInput.value.trim();
+  if(!text) return;
+  messageInput.value='';
+  askMIRA(text);
+}
+
+sendBtn.addEventListener('click',sendMessage);
+messageInput.addEventListener('keydown',e=>{if(e.key==='Enter')sendMessage()});
+if('speechSynthesis' in window) speechSynthesis.onvoiceschanged=()=>speechSynthesis.getVoices();
+
+const Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+if(Recognition){
+  const recognition=new Recognition();
+  recognition.lang='hi-IN';
+  recognition.continuous=false;
+  recognition.interimResults=false;
+  recognition.onstart=()=>{micBtn.classList.add('active')};
+  recognition.onresult=e=>{const text=e.results[0][0].transcript; messageInput.value=text; askMIRA(text)};
+  recognition.onerror=e=>console.warn('Mic:',e.error);
+  recognition.onend=()=>micBtn.classList.remove('active');
+  micBtn.addEventListener('click',()=>{try{recognition.start()}catch(e){}});
+}else{
+  micBtn.addEventListener('click',()=>alert('Boss, Chrome mein voice input use karo.'));
+}
+
+showResponse('Boss, MIRA online hai. Aap mujhse text ya voice mein baat kar sakte ho.');
+
+</script>
+</body>
+</html>
