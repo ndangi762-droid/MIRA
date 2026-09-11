@@ -9,7 +9,7 @@ from memory import init_memory, save_memory, list_memories, delete_memory
 load_dotenv("backend/.env")
 load_dotenv()
 
-app = FastAPI(title="MIRA", version="2.1")
+app = FastAPI(title="MIRA", version="2.2")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
 api_key = os.getenv("GROQ_API_KEY")
@@ -46,17 +46,13 @@ ACCURACY:
 - Exact price, date, timing, address, availability ya specification assume mat karo.
 - Simple plan mein bina pooche hotel, restaurant, tourist place, booking ya transport invent mat karo.
 
-MEMORY:
-- Long-term memory available hai. Relevant saved memories ko context samjho.
-- Boss jab clearly bole "yaad rakho", "remember this", "save this", tab memory save karne ki koshish karo.
-- Temporary ya sensitive information ko bina clear request ke memory mein save mat karo.
-- Agar memory save nahi ho paaye to honestly batao.
-- Purani memory ko current user message se override karna ho to latest explicit instruction follow karo.
-
-CONVERSATION:
-- Previous messages ka context use karo.
-- Ambiguous request mein sirf ek useful clarification poochho.
-- Boss ko same information baar-baar repeat karne par majboor mat karo.
+MEMORY INTELLIGENCE:
+- Long-term memory ko useful context ke liye use karo.
+- Clearly requested memory ("yaad rakho", "remember this", "save this") ko save karo.
+- Stable preferences, recurring projects, important working preferences aur persistent instructions ko high-confidence memory candidates samjho.
+- Temporary facts, one-time plans, passwords, API keys, financial credentials, health details aur other sensitive information ko automatic memory mein save mat karo.
+- User ki latest explicit instruction purani memory se priority rakhti hai.
+- Memory ko answer mein tabhi mention karo jab relevant ho.
 """.strip()
 
 
@@ -64,7 +60,7 @@ def build_messages(session_id: str, user_message: str):
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     memories = list_memories(session_id, 30)
     if memories:
-        memory_text = "\n".join(f"- {m['key']}: {m['value']}" for m in memories)
+        memory_text = "\n".join(f"- [{m['category']}] {m['key']}: {m['value']}" for m in memories)
         messages.append({"role": "system", "content": "Saved long-term memories for this Boss:\n" + memory_text})
     messages.extend(list(sessions[session_id]))
     messages.append({"role": "user", "content": user_message})
@@ -75,28 +71,53 @@ def extract_tool_info(message):
     return bool(getattr(message, "executed_tools", None) or [])
 
 
-def maybe_save_explicit_memory(session_id: str, text: str):
+def explicit_memory(text: str):
     lowered = text.lower().strip()
     triggers = ["yaad rakho", "yaad rakhna", "remember this", "save this", "memory me save", "memory mein save"]
-    if not any(t in lowered for t in triggers):
-        return None
-    cleaned = text
     for trigger in triggers:
         idx = lowered.find(trigger)
         if idx >= 0:
             cleaned = text[idx + len(trigger):].strip(" :-,.")
-            break
-    if not cleaned:
+            return cleaned if cleaned else None
+    return None
+
+
+def auto_memory_candidate(text: str):
+    """High-confidence, non-sensitive memory candidates only."""
+    low = text.lower().strip()
+    blocked = ["password", "passcode", "otp", "api key", "apikey", "secret", "token", "cvv", "card number", "bank account", "medical", "medicine", "diagnosis"]
+    if any(x in low for x in blocked):
         return None
-    key = "memory_" + str(abs(hash(cleaned)) % 100000000)
-    save_memory(session_id, key, cleaned)
-    return key
+    patterns = [
+        ("preference", ["mujhe pasand hai", "mujhe pasand", "i prefer", "i like", "i don't like", "mujhe nahi pasand"]),
+        ("instruction", ["hamesha", "always", "default me", "default mein", "aage se", "from now on"]),
+        ("project", ["mera project", "hamara project", "my project", "mira ko", "mira mein"]),
+        ("workflow", ["main use karta hoon", "main use karti hoon", "i use", "mera workflow", "my workflow"]),
+    ]
+    for category, triggers in patterns:
+        if any(t in low for t in triggers) and len(text) <= 600:
+            return category, text.strip()
+    return None
+
+
+def save_memory_from_message(session_id: str, text: str):
+    explicit = explicit_memory(text)
+    if explicit:
+        key = "explicit_" + str(abs(hash(explicit)) % 100000000)
+        save_memory(session_id, key, explicit, "explicit")
+        return {"saved": True, "type": "explicit", "key": key}
+    candidate = auto_memory_candidate(text)
+    if candidate:
+        category, value = candidate
+        key = category + "_" + str(abs(hash(value)) % 100000000)
+        save_memory(session_id, key, value, category)
+        return {"saved": True, "type": "automatic", "key": key}
+    return {"saved": False}
 
 
 @app.get("/")
 def home():
-    return {"assistant": "MIRA", "status": "ONLINE", "version": "2.1", "model": MODEL,
-            "memory": MEMORY_STATUS,
+    return {"assistant": "MIRA", "status": "ONLINE", "version": "2.2", "model": MODEL, "memory": MEMORY_STATUS,
             "tools": ["web_search", "visit_website", "code_execution", "wolfram_alpha"],
             "message": "Boss, MIRA online hai."}
 
@@ -109,7 +130,7 @@ def health():
 @app.get("/ask")
 def ask(message: str = Query(..., min_length=1, max_length=12000), session_id: str = Query("boss", min_length=1, max_length=100)):
     try:
-        maybe_save_explicit_memory(session_id, message)
+        memory_result = save_memory_from_message(session_id, message)
         response = client.chat.completions.create(
             model=MODEL,
             messages=build_messages(session_id, message),
@@ -119,8 +140,8 @@ def ask(message: str = Query(..., min_length=1, max_length=12000), session_id: s
         answer = assistant_message.content or "Boss, mujhe is request ka clear answer nahi mila."
         sessions[session_id].append({"role": "user", "content": message})
         sessions[session_id].append({"role": "assistant", "content": answer})
-        return {"assistant": "MIRA", "response": answer, "model": MODEL,
-                "memory": MEMORY_STATUS, "live_tools_used": extract_tool_info(assistant_message)}
+        return {"assistant": "MIRA", "response": answer, "model": MODEL, "memory": MEMORY_STATUS,
+                "memory_action": memory_result, "live_tools_used": extract_tool_info(assistant_message)}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"MIRA backend error: {type(exc).__name__}") from exc
 
@@ -131,10 +152,10 @@ def get_memory(session_id: str = Query("boss", min_length=1, max_length=100)):
 
 
 @app.post("/memory/save")
-def memory_save(key: str = Query(..., min_length=1, max_length=100), value: str = Query(..., min_length=1, max_length=5000), session_id: str = Query("boss", min_length=1, max_length=100)):
+def memory_save(key: str = Query(..., min_length=1, max_length=100), value: str = Query(..., min_length=1, max_length=5000), category: str = Query("general", min_length=1, max_length=50), session_id: str = Query("boss", min_length=1, max_length=100)):
     try:
-        save_memory(session_id, key.strip(), value.strip())
-        return {"assistant": "MIRA", "status": "saved", "key": key.strip()}
+        save_memory(session_id, key.strip(), value.strip(), category.strip())
+        return {"assistant": "MIRA", "status": "saved", "key": key.strip(), "category": category.strip()}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Memory error: {type(exc).__name__}") from exc
 
