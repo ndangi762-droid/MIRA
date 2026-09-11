@@ -5,11 +5,12 @@ from dotenv import load_dotenv
 import os
 from collections import defaultdict, deque
 from memory import init_memory, save_memory, list_memories, delete_memory
+from tools import run_tool, list_files
 
 load_dotenv("backend/.env")
 load_dotenv()
 
-app = FastAPI(title="MIRA", version="2.2")
+app = FastAPI(title="MIRA", version="2.3")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 
 api_key = os.getenv("GROQ_API_KEY")
@@ -53,6 +54,13 @@ MEMORY INTELLIGENCE:
 - Temporary facts, one-time plans, passwords, API keys, financial credentials, health details aur other sensitive information ko automatic memory mein save mat karo.
 - User ki latest explicit instruction purani memory se priority rakhti hai.
 - Memory ko answer mein tabhi mention karo jab relevant ho.
+
+TOOL SYSTEM:
+- MIRA ke safe local tools available hain: calculator, current_time, list_files, read_file, search_files, write_note.
+- Tool use karne se pehle request ka scope samjho.
+- File tools sirf MIRA workspace ke andar kaam karte hain.
+- Arbitrary shell commands, destructive actions, credential access, ya security bypass mat karo.
+- Web research ke liye built-in live web tools use karo; local file tools ko web browsing ka replacement mat samjho.
 """.strip()
 
 
@@ -83,7 +91,6 @@ def explicit_memory(text: str):
 
 
 def auto_memory_candidate(text: str):
-    """High-confidence, non-sensitive memory candidates only."""
     low = text.lower().strip()
     blocked = ["password", "passcode", "otp", "api key", "apikey", "secret", "token", "cvv", "card number", "bank account", "medical", "medicine", "diagnosis"]
     if any(x in low for x in blocked):
@@ -117,14 +124,45 @@ def save_memory_from_message(session_id: str, text: str):
 
 @app.get("/")
 def home():
-    return {"assistant": "MIRA", "status": "ONLINE", "version": "2.2", "model": MODEL, "memory": MEMORY_STATUS,
-            "tools": ["web_search", "visit_website", "code_execution", "wolfram_alpha"],
+    return {"assistant": "MIRA", "status": "ONLINE", "version": "2.3", "model": MODEL, "memory": MEMORY_STATUS,
+            "tools": ["web_search", "visit_website", "code_execution", "wolfram_alpha", "calculator", "current_time", "list_files", "read_file", "search_files", "write_note"],
             "message": "Boss, MIRA online hai."}
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "assistant": "MIRA", "model": MODEL, "memory": MEMORY_STATUS}
+    return {"status": "ok", "assistant": "MIRA", "model": MODEL, "memory": MEMORY_STATUS, "version": "2.3"}
+
+
+@app.get("/tools")
+def tools():
+    return {"assistant": "MIRA", "safe_tools": [
+        {"name": "calculator", "permission": "READ"},
+        {"name": "current_time", "permission": "READ"},
+        {"name": "list_files", "permission": "READ"},
+        {"name": "read_file", "permission": "READ"},
+        {"name": "search_files", "permission": "READ"},
+        {"name": "write_note", "permission": "WRITE"},
+    ], "dangerous_shell": "DENIED"}
+
+
+@app.post("/tool")
+def tool(name: str = Query(..., min_length=1, max_length=50), expression: str = Query("", max_length=1000), filename: str = Query("", max_length=500), content: str = Query("", max_length=50000), query: str = Query("", max_length=500)):
+    """Direct allowlisted tool endpoint. No arbitrary code/shell execution."""
+    try:
+        if name == "calculator":
+            return run_tool(name, expression=expression)
+        if name == "read_file":
+            return run_tool(name, name=filename)
+        if name == "write_note":
+            return run_tool(name, name=filename, content=content)
+        if name == "search_files":
+            return run_tool(name, query=query)
+        return run_tool(name)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found in MIRA workspace")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Tool error: {type(exc).__name__}") from exc
 
 
 @app.get("/ask")
