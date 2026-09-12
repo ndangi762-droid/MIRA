@@ -1,4 +1,5 @@
 import re
+from typing import AsyncIterator
 
 from app.core.prompts import SYSTEM_PROMPT
 from app.core.style_engine import StyleEngine
@@ -65,25 +66,46 @@ class MIRA:
             return f"Boss, {result['file']} ka content:\n\n{result['content']}"
         return "Boss, action complete ho gaya."
 
-    async def chat(self, message: str, session_id: str = "boss") -> str:
-        saved = self._capture_memory_request(message)
-        smart_category = None if saved else self._capture_smart_memory(message)
-        history = self.memory.recent(limit=10, session_id=session_id)
+    def _build_prompt(self, message: str, history: list[dict]):
         style_context = self.style.examples_for(message, limit=3)
         style_block = (
             "\n\n" + style_context +
             "\nUse these examples as STYLE guidance only. Do not copy them unless they directly fit the conversation."
             if style_context else ""
         )
+        smart_category = self.smart_memory.classify(message) if self.smart_memory.should_store(message) else None
         memory_notice = (
             f"\n\nThis message was classified as useful long-term memory in category: {smart_category}."
             if smart_category else ""
         )
+        context = self._memory_context()
+        system = SYSTEM_PROMPT + style_block + memory_notice + ("\n\n" + context if context else "")
+        return system, history
+
+    async def chat(self, message: str, session_id: str = "boss") -> str:
+        parts = []
+        async for delta in self.stream(message, session_id):
+            parts.append(delta)
+        return "".join(parts)
+
+    async def stream(self, message: str, session_id: str = "boss") -> AsyncIterator[str]:
+        saved = self._capture_memory_request(message)
+        smart_category = None if saved else self._capture_smart_memory(message)
+        history = self.memory.recent(limit=10, session_id=session_id)
+
         if saved:
-            response = await self.llm.generate(
-                SYSTEM_PROMPT + style_block + "\n\nIMPORTANT: Boss explicitly asked to save a memory. Confirm briefly and naturally that it has been saved.",
-                history, message,
+            style_context = self.style.examples_for(message, limit=3)
+            style_block = (
+                "\n\n" + style_context +
+                "\nUse these examples as STYLE guidance only. Do not copy them unless they directly fit the conversation."
+                if style_context else ""
             )
+            system = SYSTEM_PROMPT + style_block + "\n\nIMPORTANT: Boss explicitly asked to save a memory. Confirm briefly and naturally that it has been saved."
+            parts = []
+            async for delta in self.llm.stream(system, history, message):
+                parts.append(delta)
+                yield delta
+            response = "".join(parts)
         else:
             action = self.actions.route(message)
             if action:
@@ -93,19 +115,26 @@ class MIRA:
                     response = self._action_reply(tool_name, result)
                 except Exception as exc:
                     response = f"Boss, action run nahi ho saka: {type(exc).__name__}."
+                yield response
             else:
-                context = self._memory_context()
-                system = SYSTEM_PROMPT + style_block + memory_notice + ("\n\n" + context if context else "")
+                system, history = self._build_prompt(message, history)
                 web_search = message.lower().startswith(("search web ", "web search ", "internet par search ", "latest search "))
                 if web_search:
                     clean = re.sub(r"^(search web|web search|internet par search|latest search)\s+", "", message, flags=re.I)
-                    response = await self.llm.generate(system, history, clean, web_search=True)
+                    parts = []
+                    async for delta in self.llm.stream(system, history, clean, web_search=True):
+                        parts.append(delta)
+                        yield delta
+                    response = "".join(parts)
                 else:
-                    response = await self.llm.generate(system, history, message)
+                    parts = []
+                    async for delta in self.llm.stream(system, history, message):
+                        parts.append(delta)
+                        yield delta
+                    response = "".join(parts)
 
         self.memory.add("user", message, session_id)
         self.memory.add("assistant", response, session_id)
-        return response
 
     def remember(self, key: str, value: str, category: str = "general"):
         self.memory.remember(key, value, category)
