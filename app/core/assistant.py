@@ -3,6 +3,7 @@ import re
 from app.core.prompts import SYSTEM_PROMPT
 from app.core.style_engine import StyleEngine
 from app.llm.client import LLMClient
+from app.memory.smart_memory import SmartMemory
 from app.memory.store import MemoryStore
 from app.tools.engine import ActionEngine
 
@@ -13,6 +14,7 @@ class MIRA:
         self.memory = MemoryStore()
         self.actions = ActionEngine()
         self.style = StyleEngine()
+        self.smart_memory = SmartMemory()
 
     def _memory_context(self):
         items = self.memory.memories(limit=20)
@@ -38,6 +40,16 @@ class MIRA:
         self.memory.remember("explicit_" + (key_base or "memory"), value, "explicit")
         return value
 
+    def _capture_smart_memory(self, message: str):
+        if not self.smart_memory.should_store(message):
+            return None
+        category = self.smart_memory.classify(message)
+        if category == "explicit" or not category:
+            return None
+        key = self.smart_memory.make_key(message, category)
+        self.memory.remember(key, message.strip(), category)
+        return category
+
     def _action_reply(self, tool_name: str, result: dict) -> str:
         if tool_name == "calculator":
             return f"Boss, result: {result['result']}"
@@ -55,12 +67,17 @@ class MIRA:
 
     async def chat(self, message: str, session_id: str = "boss") -> str:
         saved = self._capture_memory_request(message)
+        smart_category = None if saved else self._capture_smart_memory(message)
         history = self.memory.recent(limit=10, session_id=session_id)
         style_context = self.style.examples_for(message, limit=3)
         style_block = (
             "\n\n" + style_context +
             "\nUse these examples as STYLE guidance only. Do not copy them unless they directly fit the conversation."
             if style_context else ""
+        )
+        memory_notice = (
+            f"\n\nThis message was classified as useful long-term memory in category: {smart_category}."
+            if smart_category else ""
         )
         if saved:
             response = await self.llm.generate(
@@ -78,7 +95,7 @@ class MIRA:
                     response = f"Boss, action run nahi ho saka: {type(exc).__name__}."
             else:
                 context = self._memory_context()
-                system = SYSTEM_PROMPT + style_block + ("\n\n" + context if context else "")
+                system = SYSTEM_PROMPT + style_block + memory_notice + ("\n\n" + context if context else "")
                 web_search = message.lower().startswith(("search web ", "web search ", "internet par search ", "latest search "))
                 if web_search:
                     clean = re.sub(r"^(search web|web search|internet par search|latest search)\s+", "", message, flags=re.I)
