@@ -47,6 +47,8 @@ class MIRA:
         if tool_name == "search_files":
             matches = result.get("matches", [])
             return f"Boss, '{result['query']}' ka koi match nahi mila." if not matches else "Boss, matches mile:\n" + "\n".join(f"• {x}" for x in matches[:50])
+        if tool_name == "read_file":
+            return f"Boss, {result['file']} ka content:\n\n{result['content']}"
         return "Boss, action complete ho gaya."
 
     async def chat(self, message: str, session_id: str = "boss") -> str:
