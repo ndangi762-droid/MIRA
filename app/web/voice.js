@@ -6,7 +6,7 @@
   let lastSpoken = '';
   let provider = 'browser';
 
-  /* Premium reactive particle field + MIRA core particles */
+  /* MIRA premium M-particle core: slow, coordinated motion + cursor interaction. */
   const particleStyle = document.createElement('style');
   particleStyle.textContent = `
     .core-text{display:none!important}
@@ -14,10 +14,6 @@
     .mira-particle-field{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
     .center,.sidebar,.rightbar,.topbar,.composer-wrap{position:relative;z-index:1}
     .welcome{position:relative;z-index:1}
-    .mira-core-particles{position:absolute;inset:-35px;border-radius:50%;pointer-events:none;overflow:visible}
-    .mira-core-particle{position:absolute;width:5px;height:5px;border-radius:50%;background:#f5c84b;box-shadow:0 0 10px #f5c84b99,0 0 22px #f5c84b44;transform:translate(-50%,-50%);will-change:transform}
-    .mira-core-particle.small{width:3px;height:3px;opacity:.7}
-    @media(max-width:720px){.mira-core-particle{width:4px;height:4px}.mira-core-particle.small{width:2px;height:2px}}
   `;
   document.head.appendChild(particleStyle);
 
@@ -26,124 +22,141 @@
   document.body.prepend(canvas);
   const ctx = canvas.getContext('2d', { alpha: true });
   const mouse = { x: -9999, y: -9999, active: false };
-  let particles = [];
-  let coreParticles = [];
-  let raf = 0;
+  let stars = [];
+  let core = [];
 
-  function resizeParticles() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const M_POINTS = [
+    [0.00,1.00],[0.08,0.84],[0.16,0.68],[0.24,0.52],[0.32,0.36],[0.40,0.20],[0.50,0.04],
+    [0.60,0.20],[0.68,0.36],[0.76,0.52],[0.84,0.68],[0.92,0.84],[1.00,1.00]
+  ];
+
+  function resize() {
+    const dpr = Math.min(devicePixelRatio || 1, 2);
     canvas.width = innerWidth * dpr;
     canvas.height = innerHeight * dpr;
     canvas.style.width = innerWidth + 'px';
     canvas.style.height = innerHeight + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const count = Math.min(190, Math.max(90, Math.floor(innerWidth * innerHeight / 10500)));
-    if (particles.length !== count) {
-      particles = Array.from({length: count}, () => ({
+    if (stars.length === 0) {
+      stars = Array.from({length: 70}, () => ({
         x: Math.random() * innerWidth,
         y: Math.random() * innerHeight,
-        vx: (Math.random() - .5) * .22,
-        vy: (Math.random() - .5) * .22,
-        r: 1.8 + Math.random() * 2.5,
-        a: .22 + Math.random() * .5,
-        gold: Math.random() < .16
+        vx: (Math.random() - .5) * .045,
+        vy: (Math.random() - .5) * .045,
+        r: .7 + Math.random() * 1.5,
+        a: .16 + Math.random() * .32,
+        gold: Math.random() < .18
       }));
     }
+    buildM();
   }
 
-  function updateCoreParticles() {
-    const core = document.querySelector('.core');
-    if (!core) return;
-    let layer = core.querySelector('.mira-core-particles');
-    if (!layer) {
-      layer = document.createElement('div');
-      layer.className = 'mira-core-particles';
-      core.appendChild(layer);
-      coreParticles = Array.from({length: 34}, (_, i) => {
-        const angle = Math.random() * Math.PI * 2;
-        const radius = 72 + Math.random() * 48;
-        const el = document.createElement('i');
-        el.className = 'mira-core-particle' + (i % 3 === 0 ? ' small' : '');
-        layer.appendChild(el);
-        return { el, angle, radius, speed: .00035 + Math.random() * .00055, wobble: Math.random() * 8, phase: Math.random() * 6.28 };
-      });
+  function sampleLine(a, b, spacing) {
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const len = Math.hypot(dx, dy);
+    const n = Math.max(2, Math.floor(len / spacing));
+    const out = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      out.push([a[0] + dx * t, a[1] + dy * t]);
     }
+    return out;
   }
 
-  function animateParticles(t) {
+  function buildM() {
+    const cx = innerWidth * .50;
+    const cy = innerHeight * .49;
+    const width = Math.min(innerWidth * .40, 470);
+    const height = Math.min(innerHeight * .56, 390);
+    const left = cx - width / 2;
+    const top = cy - height / 2;
+    const spacing = Math.max(0.035, width / 1200);
+    let targets = [];
+    for (let i = 0; i < M_POINTS.length - 1; i++) {
+      targets = targets.concat(sampleLine(M_POINTS[i], M_POINTS[i + 1], spacing));
+    }
+
+    // Dense enough to read as an M, but sparse and premium rather than a solid stroke.
+    targets = targets.filter((_, i) => i % 2 === 0);
+    core = targets.map((p, i) => ({
+      tx: left + p[0] * width,
+      ty: top + p[1] * height,
+      x: left + p[0] * width + (Math.random() - .5) * 12,
+      y: top + p[1] * height + (Math.random() - .5) * 12,
+      vx: 0,
+      vy: 0,
+      phase: Math.random() * Math.PI * 2,
+      drift: 2 + Math.random() * 5,
+      r: 1.2 + Math.random() * 2.2,
+      a: .52 + Math.random() * .40,
+      gold: i % 8 === 0 || Math.random() < .12
+    }));
+  }
+
+  function animate(t) {
     const w = innerWidth, h = innerHeight;
     ctx.clearRect(0, 0, w, h);
 
-    for (const p of particles) {
-      p.x += p.vx; p.y += p.vy;
-      if (p.x < -10) p.x = w + 10; if (p.x > w + 10) p.x = -10;
-      if (p.y < -10) p.y = h + 10; if (p.y > h + 10) p.y = -10;
-
-      if (mouse.active) {
-        const dx = p.x - mouse.x, dy = p.y - mouse.y;
-        const dist2 = dx * dx + dy * dy;
-        const radius = 145;
-        if (dist2 < radius * radius) {
-          const dist = Math.sqrt(dist2) || 1;
-          const force = (1 - dist / radius) * 1.9;
-          p.x += (dx / dist) * force;
-          p.y += (dy / dist) * force;
-        }
-      }
-
+    // Very slow background stars.
+    for (const s of stars) {
+      s.x += s.vx; s.y += s.vy;
+      if (s.x < -4) s.x = w + 4; if (s.x > w + 4) s.x = -4;
+      if (s.y < -4) s.y = h + 4; if (s.y > h + 4) s.y = -4;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fillStyle = p.gold ? `rgba(245,200,75,${p.a})` : `rgba(180,190,205,${p.a * .55})`;
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fillStyle = s.gold ? `rgba(245,200,75,${s.a})` : `rgba(190,205,220,${s.a * .48})`;
       ctx.fill();
     }
 
-    // Very subtle particle-to-particle network, only when close.
-    for (let i = 0; i < particles.length; i++) {
-      const a = particles[i];
-      for (let j = i + 1; j < particles.length && j < i + 7; j++) {
-        const b = particles[j];
-        const dx = a.x - b.x, dy = a.y - b.y;
-        const d = Math.sqrt(dx * dx + dy * dy);
-        if (d < 92) {
-          ctx.beginPath();
-          ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-          ctx.strokeStyle = `rgba(245,200,75,${(1-d/92)*.055})`;
-          ctx.lineWidth = 1;
-          ctx.stroke();
+    // The M moves as one soft field: tiny synchronized breathing/drift, not a rotation.
+    const breathe = Math.sin(t * .00055) * .8;
+    for (const p of core) {
+      const desiredX = p.tx + Math.sin(t * .00072 + p.phase) * p.drift + breathe;
+      const desiredY = p.ty + Math.cos(t * .00061 + p.phase) * p.drift * .72;
+      const dx0 = desiredX - p.x, dy0 = desiredY - p.y;
+      p.vx += dx0 * .010;
+      p.vy += dy0 * .010;
+      p.vx *= .90;
+      p.vy *= .90;
+
+      // Cursor repulsion. Particles are pushed away, then spring back naturally.
+      if (mouse.active) {
+        const dx = p.x - mouse.x, dy = p.y - mouse.y;
+        const d = Math.hypot(dx, dy) || 1;
+        const radius = 155;
+        if (d < radius) {
+          const force = (1 - d / radius) * 2.9;
+          p.vx += (dx / d) * force;
+          p.vy += (dy / d) * force;
         }
       }
+
+      p.x += p.vx;
+      p.y += p.vy;
+
+      // Subtle halo only; no circle/ring is drawn.
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r * 3.2, 0, Math.PI * 2);
+      ctx.fillStyle = p.gold ? `rgba(245,200,75,${p.a * .045})` : `rgba(205,220,235,${p.a * .025})`;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = p.gold ? `rgba(245,200,75,${p.a})` : `rgba(225,235,245,${p.a * .72})`;
+      ctx.fill();
     }
 
-    updateCoreParticles();
-    for (const p of coreParticles) {
-      p.angle += p.speed * 16;
-      const baseX = 50 + Math.cos(p.angle) * p.radius;
-      const baseY = 50 + Math.sin(p.angle) * p.radius;
-      let x = baseX + Math.cos(t * .001 + p.phase) * p.wobble;
-      let y = baseY + Math.sin(t * .0012 + p.phase) * p.wobble;
-      const rect = document.querySelector('.core')?.getBoundingClientRect();
-      if (rect && mouse.active) {
-        const px = rect.left + (x / 100) * rect.width;
-        const py = rect.top + (y / 100) * rect.height;
-        const dx = px - mouse.x, dy = py - mouse.y;
-        const d = Math.hypot(dx, dy) || 1;
-        if (d < 180) {
-          const push = (1 - d / 180) * 28;
-          x += (dx / d) * push * 100 / rect.width;
-          y += (dy / d) * push * 100 / rect.height;
-        }
-      }
-      p.el.style.left = x + '%';
-      p.el.style.top = y + '%';
-    }
-    raf = requestAnimationFrame(animateParticles);
+    requestAnimationFrame(animate);
   }
 
-  addEventListener('pointermove', e => { mouse.x = e.clientX; mouse.y = e.clientY; mouse.active = true; }, {passive:true});
+  addEventListener('pointermove', e => {
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+    mouse.active = true;
+  }, {passive:true});
   addEventListener('pointerleave', () => { mouse.active = false; });
-  addEventListener('resize', resizeParticles);
-  resizeParticles();
-  raf = requestAnimationFrame(animateParticles);
+  addEventListener('resize', resize);
+  resize();
+  requestAnimationFrame(animate);
 
   const style = document.createElement('style');
   style.textContent = `
