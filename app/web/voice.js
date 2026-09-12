@@ -33,10 +33,10 @@
       const r = await fetch('/api/voice/status');
       const d = await r.json();
       provider = d.provider || 'browser';
-      toggle.title = provider === 'piper'
-        ? `Free local Hindi female voice • ${d.voice || 'Priyamvada'}`
-        : provider === 'elevenlabs'
-          ? 'Natural ElevenLabs Hindi voice'
+      toggle.title = provider === 'edge-tts'
+        ? `Free neural Hindi female voice • ${d.voice || 'Swara'}`
+        : provider === 'piper'
+          ? `Free local Hindi female voice • ${d.voice || 'Priyamvada'}`
           : 'Voice unavailable';
     } catch (_) {}
   }
@@ -74,7 +74,7 @@
     if (!enabled || !text || text === lastSpoken) return;
     lastSpoken = text;
     try {
-      if (provider === 'piper' || provider === 'elevenlabs') await serverSpeak(text);
+      if (provider === 'edge-tts' || provider === 'piper' || provider === 'elevenlabs') await serverSpeak(text);
       else browserSpeak(text);
     } catch (_) {
       browserSpeak(text);
