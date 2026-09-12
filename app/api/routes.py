@@ -5,11 +5,11 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from app.core.assistant import MIRA
 from app.files.document_store import save_upload, extract_text
-from app.voice.elevenlabs import ElevenLabsTTS
+from app.voice.piper import PiperTTS
 
 router = APIRouter()
 mira = MIRA()
-tts = ElevenLabsTTS()
+tts = PiperTTS()
 
 
 class ChatRequest(BaseModel):
@@ -34,7 +34,7 @@ class SessionRequest(BaseModel):
 
 @router.get("/api/health")
 async def health():
-    return {"status": "ok", "assistant": "MIRA", "version": "7.4.0", "memory": "ready", "documents": "ready", "sessions": "ready", "streaming": "ready", "voice": "elevenlabs" if tts.configured else "browser-fallback"}
+    return {"status": "ok", "assistant": "MIRA", "version": "7.5.0", "memory": "ready", "documents": "ready", "sessions": "ready", "streaming": "ready", "voice": "piper" if tts.configured else "voice-unavailable"}
 
 
 @router.post("/api/chat")
@@ -68,17 +68,17 @@ async def chat_stream(req: ChatRequest):
 @router.post("/api/voice/speak")
 async def voice_speak(req: TTSRequest):
     if not tts.configured:
-        raise HTTPException(status_code=503, detail="ElevenLabs is not configured. Add ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID to .env.")
+        raise HTTPException(status_code=503, detail="Piper Hindi female voice is not configured. Run scripts\\setup_piper.ps1 first.")
     try:
         audio = await tts.synthesize(req.text.strip())
-        return Response(content=audio, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
+        return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"ElevenLabs TTS error: {type(exc).__name__}") from exc
+        raise HTTPException(status_code=502, detail=f"Piper TTS error: {type(exc).__name__}") from exc
 
 
 @router.get("/api/voice/status")
 async def voice_status():
-    return {"provider": "elevenlabs" if tts.configured else "browser", "configured": tts.configured}
+    return {"provider": "piper", "configured": tts.configured, "voice": tts.voice}
 
 
 @router.get("/api/sessions")
