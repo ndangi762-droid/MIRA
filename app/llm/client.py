@@ -7,12 +7,7 @@ from app.llm.openai_client import OpenAIClient
 
 
 class LLMClient:
-    """Select an LLM provider at runtime.
-
-    ``auto`` prefers OpenAI only when an API key is currently configured;
-    otherwise it falls back to local Ollama. Reading environment variables at
-    runtime also keeps tests and local configuration changes deterministic.
-    """
+    """Select an LLM provider at runtime."""
 
     def __init__(self):
         self.openai = OpenAIClient()
@@ -37,3 +32,16 @@ class LLMClient:
         if web_search:
             raise RuntimeError("web search requires the OpenAI provider")
         return await self.ollama.generate(system, history, message)
+
+    async def stream(self, system: str, history: list[dict], message: str, web_search: bool = False):
+        """Yield response text incrementally when the active provider supports it."""
+        if self.active_provider == "ollama":
+            if web_search:
+                raise RuntimeError("web search requires the OpenAI provider")
+            async for delta in self.ollama.stream(system, history, message):
+                yield delta
+            return
+
+        # Keep OpenAI compatibility without requiring a provider-specific
+        # streaming interface yet. The UI still receives a valid final chunk.
+        yield await self.openai.generate(system, history, message, web_search=web_search)
