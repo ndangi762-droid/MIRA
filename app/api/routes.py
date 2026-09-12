@@ -1,18 +1,24 @@
 import json
 
 from fastapi import APIRouter, HTTPException, UploadFile, File
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from app.core.assistant import MIRA
 from app.files.document_store import save_upload, extract_text
+from app.voice.elevenlabs import ElevenLabsTTS
 
 router = APIRouter()
 mira = MIRA()
+tts = ElevenLabsTTS()
 
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=12000)
     session_id: str = Field(default="boss", min_length=1, max_length=100)
+
+
+class TTSRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=5000)
 
 
 class RememberRequest(BaseModel):
@@ -28,7 +34,7 @@ class SessionRequest(BaseModel):
 
 @router.get("/api/health")
 async def health():
-    return {"status": "ok", "assistant": "MIRA", "version": "7.3.0", "memory": "ready", "documents": "ready", "sessions": "ready", "streaming": "ready"}
+    return {"status": "ok", "assistant": "MIRA", "version": "7.4.0", "memory": "ready", "documents": "ready", "sessions": "ready", "streaming": "ready", "voice": "elevenlabs" if tts.configured else "browser-fallback"}
 
 
 @router.post("/api/chat")
@@ -57,6 +63,22 @@ async def chat_stream(req: ChatRequest):
             yield json.dumps({"error": f"MIRA backend error: {type(exc).__name__}"}, ensure_ascii=False) + "\n"
 
     return StreamingResponse(events(), media_type="application/x-ndjson", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/api/voice/speak")
+async def voice_speak(req: TTSRequest):
+    if not tts.configured:
+        raise HTTPException(status_code=503, detail="ElevenLabs is not configured. Add ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID to .env.")
+    try:
+        audio = await tts.synthesize(req.text.strip())
+        return Response(content=audio, media_type="audio/mpeg", headers={"Cache-Control": "no-store"})
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"ElevenLabs TTS error: {type(exc).__name__}") from exc
+
+
+@router.get("/api/voice/status")
+async def voice_status():
+    return {"provider": "elevenlabs" if tts.configured else "browser", "configured": tts.configured}
 
 
 @router.get("/api/sessions")
