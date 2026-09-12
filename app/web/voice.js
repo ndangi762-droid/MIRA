@@ -6,116 +6,198 @@
   let lastSpoken = '';
   let provider = 'browser';
 
-  /* MIRA visual core: visible slow particle circle, no solid ring or text. */
-  const visualStyle = document.createElement('style');
-  visualStyle.textContent = `
-    .core{background:transparent!important;box-shadow:none!important;filter:none!important;overflow:visible!important}
+  /* MIRA core: same slow reactive motion, redesigned to match the supplied cyber-particle sphere. */
+  const particleStyle = document.createElement('style');
+  particleStyle.textContent = `
+    .core{background:transparent!important;box-shadow:none!important;filter:none!important;overflow:visible!important;width:430px!important;height:430px!important;margin-bottom:18px!important}
     .core:before,.core:after,.core-text{display:none!important;content:none!important}
     .mira-particle-field{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
-    .mira-core-field{position:absolute;left:50%;top:50%;width:300px;height:300px;transform:translate(-50%,-50%);pointer-events:none;overflow:visible;z-index:4}
-    .mira-core-dot{position:absolute;width:4px;height:4px;border-radius:50%;background:#f5c84b;box-shadow:0 0 8px #f5c84b99,0 0 20px #f5c84b55;will-change:transform;transform:translate3d(-50%,-50%,0)}
-    .mira-core-dot.white{background:#fff4c5;box-shadow:0 0 7px #fff7d6,0 0 17px #f5c84b66}
-    .mira-core-dot.dim{width:2.5px;height:2.5px;opacity:.62}
-    @media(max-width:720px){.mira-core-field{width:240px;height:240px}.mira-core-dot{width:3.5px;height:3.5px}}
+    .center,.sidebar,.rightbar,.topbar,.composer-wrap,.welcome{position:relative;z-index:1}
+    .mira-core-canvas{position:absolute;left:50%;top:50%;width:430px;height:430px;transform:translate(-50%,-50%);pointer-events:none;overflow:visible;z-index:2}
+    @media(max-width:720px){.core{width:300px!important;height:300px!important}.mira-core-canvas{width:300px;height:300px}}
   `;
-  document.head.appendChild(visualStyle);
+  document.head.appendChild(particleStyle);
 
   const canvas = document.createElement('canvas');
   canvas.className = 'mira-particle-field';
   document.body.prepend(canvas);
-  const ctx = canvas.getContext('2d', {alpha:true});
-  const mouse = {x:-9999,y:-9999,active:false};
+  const ctx = canvas.getContext('2d', { alpha: true });
+  const mouse = { x: -9999, y: -9999, active: false };
   let particles = [];
+  let coreCanvas = null;
+  let coreCtx = null;
   let coreParticles = [];
-  let coreField = null;
 
-  function resizeParticles(){
-    const dpr=Math.min(window.devicePixelRatio||1,2);
-    canvas.width=innerWidth*dpr; canvas.height=innerHeight*dpr;
-    canvas.style.width=innerWidth+'px'; canvas.style.height=innerHeight+'px';
-    ctx.setTransform(dpr,0,0,dpr,0,0);
-    const count=Math.min(115,Math.max(55,Math.floor(innerWidth*innerHeight/19000)));
-    if(particles.length!==count){
-      particles=Array.from({length:count},()=>({
-        x:Math.random()*innerWidth,y:Math.random()*innerHeight,
-        vx:(Math.random()-.5)*.045,vy:(Math.random()-.5)*.045,
-        r:1.7+Math.random()*2.1,a:.16+Math.random()*.28,
-        gold:Math.random()<.25,seed:Math.random()*Math.PI*2
+  function resizeParticles() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = innerWidth * dpr;
+    canvas.height = innerHeight * dpr;
+    canvas.style.width = innerWidth + 'px';
+    canvas.style.height = innerHeight + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const count = Math.min(145, Math.max(70, Math.floor(innerWidth * innerHeight / 14500)));
+    if (particles.length !== count) {
+      particles = Array.from({length: count}, () => ({
+        x: Math.random() * innerWidth, y: Math.random() * innerHeight,
+        vx: (Math.random() - .5) * .105, vy: (Math.random() - .5) * .105,
+        r: 1.5 + Math.random() * 1.8, a: .20 + Math.random() * .38,
+        gold: Math.random() < .18, seed: Math.random() * Math.PI * 2
       }));
     }
   }
 
-  function circularTargets(count){
-    const out=[];
-    for(let i=0;i<count;i++){
-      const angle=(i/count)*Math.PI*2 + (Math.random()-.5)*.025;
-      const radius=38 + Math.random()*9;
-      out.push({x:50+Math.cos(angle)*radius,y:50+Math.sin(angle)*radius});
-    }
-    return out;
-  }
+  function ensureCore() {
+    const core = document.querySelector('.core');
+    if (!core) return null;
+    if (!coreCanvas) {
+      coreCanvas = document.createElement('canvas');
+      coreCanvas.className = 'mira-core-canvas';
+      core.appendChild(coreCanvas);
+      coreCtx = coreCanvas.getContext('2d', { alpha: true });
+      const dpr = Math.min(devicePixelRatio || 1, 2);
+      coreCanvas.width = 430 * dpr;
+      coreCanvas.height = 430 * dpr;
+      coreCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  function ensureCore(){
-    const core=document.querySelector('.core');
-    if(!core) return null;
-    if(!coreField){
-      coreField=document.createElement('div');
-      coreField.className='mira-core-field';
-      core.appendChild(coreField);
-      const targets=circularTargets(150);
-      coreParticles=targets.map((target,i)=>{
-        const el=document.createElement('i');
-        el.className='mira-core-dot'+(i%7===0?' white':'')+(i%5===0?' dim':'');
-        coreField.appendChild(el);
-        return {el,tx:target.x,ty:target.y,x:target.x,y:target.y,vx:0,vy:0,phase:Math.random()*Math.PI*2,seed:Math.random()*Math.PI*2};
+      const count = 420;
+      coreParticles = Array.from({length: count}, (_, i) => {
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        const radius = Math.pow(Math.random(), .62) * 185;
+        return {
+          theta, phi, radius,
+          x: Math.sin(phi) * Math.cos(theta) * radius,
+          y: Math.cos(phi) * radius * .92,
+          z: Math.sin(phi) * Math.sin(theta) * radius,
+          ox: 0, oy: 0, oz: 0,
+          vx: 0, vy: 0, vz: 0,
+          phase: Math.random() * Math.PI * 2,
+          hue: Math.random() < .28 ? 'blue' : (Math.random() < .25 ? 'hot' : 'gold'),
+          size: .65 + Math.random() * 1.9,
+          alpha: .38 + Math.random() * .55,
+          trail: Math.random() < .16
+        };
       });
     }
     return core;
   }
 
-  function animateParticles(t){
-    const w=innerWidth,h=innerHeight;
-    ctx.clearRect(0,0,w,h);
+  function drawCore(t) {
+    const core = ensureCore();
+    if (!core || !coreCanvas || !coreCtx) return;
+    const rect = coreCanvas.getBoundingClientRect();
+    const w = rect.width, h = rect.height;
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    if (coreCanvas.width !== Math.round(w * dpr) || coreCanvas.height !== Math.round(h * dpr)) {
+      coreCanvas.width = Math.round(w * dpr); coreCanvas.height = Math.round(h * dpr);
+      coreCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    coreCtx.clearRect(0, 0, w, h);
+    const cx = w / 2, cy = h / 2;
+    const rotY = t * .00008, rotX = Math.sin(t * .00012) * .055;
 
-    // Slow background drift.
-    for(const p of particles){
-      p.x+=p.vx+Math.sin(t*.00012+p.seed)*.012;
-      p.y+=p.vy+Math.cos(t*.00010+p.seed)*.012;
-      if(p.x<-10)p.x=w+10;if(p.x>w+10)p.x=-10;
-      if(p.y<-10)p.y=h+10;if(p.y>h+10)p.y=-10;
-      if(mouse.active){
-        const dx=p.x-mouse.x,dy=p.y-mouse.y,d=Math.hypot(dx,dy)||1,radius=150;
-        if(d<radius){const f=(1-d/radius)*.7;p.x+=dx/d*f;p.y+=dy/d*f;}
+    /* Soft energy shell like the supplied reference, without becoming a solid orb. */
+    const glow = coreCtx.createRadialGradient(cx, cy, 8, cx, cy, w * .43);
+    glow.addColorStop(0, 'rgba(255,115,25,.10)');
+    glow.addColorStop(.28, 'rgba(255,55,20,.035)');
+    glow.addColorStop(.62, 'rgba(20,90,255,.025)');
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    coreCtx.fillStyle = glow;
+    coreCtx.fillRect(0, 0, w, h);
+
+    const projected = [];
+    for (const p of coreParticles) {
+      const wave = Math.sin(t * .00038 + p.phase) * 2.1;
+      let x = p.x + Math.cos(p.phase + t * .00015) * wave;
+      let y = p.y + Math.sin(p.phase + t * .00013) * wave;
+      let z = p.z;
+
+      const dx = (rect.left + cx + x) - mouse.x;
+      const dy = (rect.top + cy + y) - mouse.y;
+      const d = Math.hypot(dx, dy) || 1;
+      if (mouse.active && d < 155) {
+        const force = Math.pow(1 - d / 155, 1.65) * 8.5;
+        p.vx += (dx / d) * force * .18;
+        p.vy += (dy / d) * force * .18;
+        p.vz += force * .12;
       }
-      ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
-      ctx.fillStyle=p.gold?`rgba(245,200,75,${p.a})`:`rgba(205,215,230,${p.a*.48})`;
-      ctx.fill();
+
+      /* Same behavior as before: fast cursor reaction, slow spring return. */
+      p.vx *= .90; p.vy *= .90; p.vz *= .90;
+      p.x += p.vx; p.y += p.vy; p.z += p.vz;
+      p.x += (Math.sin(p.phase + t * .00018) * 185 - p.x) * .00055;
+      p.y += (Math.cos(p.phase + t * .00016) * 185 - p.y) * .00032;
+      p.z += (Math.sin(p.phase * 1.7 + t * .00014) * 185 - p.z) * .00038;
+
+      const ry = rotY;
+      const rx = rotX;
+      const xx = x * Math.cos(ry) - z * Math.sin(ry);
+      const zz = x * Math.sin(ry) + z * Math.cos(ry);
+      const yy = y * Math.cos(rx) - zz * Math.sin(rx);
+      const z2 = y * Math.sin(rx) + zz * Math.cos(rx);
+      const scale = 390 / (390 - z2);
+      projected.push({x:cx + xx * scale,y:cy + yy * scale,z:z2,s:p.size * scale,a:p.alpha});
     }
 
-    const core=ensureCore();
-    if(core&&coreField){
-      const rect=coreField.getBoundingClientRect();
-      const cx=rect.width/2,cy=rect.height/2;
-      for(const p of coreParticles){
-        // All particles flow slowly together while maintaining the circular silhouette.
-        const baseAngle=Math.atan2(p.ty-50,p.tx-50)+t*.00011;
-        const baseRadius=Math.hypot(p.tx-50,p.ty-50)/100*rect.width;
-        const targetX=cx+Math.cos(baseAngle)*baseRadius+Math.sin(t*.00035+p.phase)*2.2;
-        const targetY=cy+Math.sin(baseAngle)*baseRadius+Math.cos(t*.00031+p.seed)*2.2;
-        p.vx+=(targetX-p.x)*.028;p.vy+=(targetY-p.y)*.028;
-
-        const px=rect.left+p.x,py=rect.top+p.y;
-        if(mouse.active){
-          const dx=px-mouse.x,dy=py-mouse.y,d=Math.hypot(dx,dy)||1,radius=145;
-          if(d<radius){
-            const f=Math.pow(1-d/radius,1.6)*4.8;
-            p.vx+=(dx/d)*f;p.vy+=(dy/d)*f;
-          }
-        }
-        p.vx*=.91;p.vy*=.91;p.x+=p.vx;p.y+=p.vy;
-        p.el.style.transform=`translate3d(${p.x}px,${p.y}px,0)`;
+    projected.sort((a,b) => a.z - b.z);
+    const pc = projected.length;
+    for (let i=0;i<pc;i++) {
+      const p = projected[i];
+      if (p.x < -30 || p.x > w+30 || p.y < -30 || p.y > h+30) continue;
+      const near = Math.max(0, (p.z + 185) / 370);
+      const alpha = p.a * (.42 + near * .62);
+      coreCtx.beginPath();
+      coreCtx.arc(p.x, p.y, Math.max(.55, p.s), 0, Math.PI * 2);
+      if (i % 17 === 0) {
+        coreCtx.fillStyle = `rgba(35,145,255,${alpha * .88})`;
+        coreCtx.shadowBlur = 10; coreCtx.shadowColor = `rgba(25,120,255,${alpha})`;
+      } else if (i % 11 === 0) {
+        coreCtx.fillStyle = `rgba(255,80,25,${alpha * .9})`;
+        coreCtx.shadowBlur = 11; coreCtx.shadowColor = `rgba(255,65,20,${alpha})`;
+      } else {
+        coreCtx.fillStyle = `rgba(245,200,75,${alpha})`;
+        coreCtx.shadowBlur = 7; coreCtx.shadowColor = `rgba(245,200,75,${alpha * .75})`;
       }
+      coreCtx.fill();
+      coreCtx.shadowBlur = 0;
     }
+
+    /* Sparse orbit-like energy trails, matching the reference's cyber feel. */
+    coreCtx.globalCompositeOperation = 'lighter';
+    for (let k=0;k<7;k++) {
+      const rr = 118 + k * 17;
+      const phase = t * .00018 * (k % 2 ? -1 : 1) + k * 1.7;
+      coreCtx.beginPath();
+      for (let j=0;j<=90;j++) {
+        const a = phase + j / 90 * Math.PI * 2;
+        const wobble = Math.sin(a * 3 + k) * 5;
+        const x = cx + Math.cos(a) * (rr + wobble);
+        const y = cy + Math.sin(a) * (rr * .55 + wobble * .35);
+        if (j===0) coreCtx.moveTo(x,y); else coreCtx.lineTo(x,y);
+      }
+      coreCtx.strokeStyle = k % 3 === 0 ? 'rgba(35,130,255,.16)' : 'rgba(255,75,25,.11)';
+      coreCtx.lineWidth = 1;
+      coreCtx.stroke();
+    }
+    coreCtx.globalCompositeOperation = 'source-over';
+  }
+
+  function animateParticles(t) {
+    const w = innerWidth, h = innerHeight;
+    ctx.clearRect(0, 0, w, h);
+    for (const p of particles) {
+      p.x += p.vx + Math.sin(t * .00015 + p.seed) * .018;
+      p.y += p.vy + Math.cos(t * .00013 + p.seed) * .018;
+      if (p.x < -10) p.x = w + 10; if (p.x > w + 10) p.x = -10;
+      if (p.y < -10) p.y = h + 10; if (p.y > h + 10) p.y = -10;
+      if (mouse.active) {
+        const dx=p.x-mouse.x,dy=p.y-mouse.y,d=Math.hypot(dx,dy)||1,radius=135;
+        if(d<radius){const force=(1-d/radius)*.95;p.x+=(dx/d)*force;p.y+=(dy/d)*force;}
+      }
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+      ctx.fillStyle=p.gold?`rgba(245,200,75,${p.a})`:`rgba(190,200,215,${p.a*.48})`; ctx.fill();
+    }
+    drawCore(t);
     requestAnimationFrame(animateParticles);
   }
 
@@ -125,7 +207,7 @@
   resizeParticles();
   requestAnimationFrame(animateParticles);
 
-  /* Voice controls. */
+  /* Existing voice controls kept unchanged. */
   const style=document.createElement('style');
   style.textContent=`
     .mira-voice-bar{position:fixed;right:20px;bottom:92px;z-index:20;display:flex;gap:7px;align-items:center;background:#11151ddd;border:1px solid #303644;border-radius:14px;padding:6px;backdrop-filter:blur(16px);box-shadow:0 12px 40px #0008}
@@ -133,9 +215,7 @@
     .mira-voice-btn.on{background:#f4c542;color:#111;font-weight:800}.mira-voice-btn.stop{display:none}
   `;
   document.head.appendChild(style);
-  const bar=document.createElement('div');bar.className='mira-voice-bar';
-  bar.innerHTML='<button class="mira-voice-btn toggle"></button><button class="mira-voice-btn stop">■ Stop</button>';
-  document.body.appendChild(bar);
+  const bar=document.createElement('div');bar.className='mira-voice-bar';bar.innerHTML='<button class="mira-voice-btn toggle"></button><button class="mira-voice-btn stop">■ Stop</button>';document.body.appendChild(bar);
   const toggle=bar.querySelector('.toggle'),stop=bar.querySelector('.stop');
   function render(){toggle.textContent=enabled?'🔊 Voice ON':'🔇 Voice OFF';toggle.classList.toggle('on',enabled);stop.style.display=audio?'block':'none';}
   async function status(){try{const r=await fetch('/api/voice/status');const d=await r.json();provider=d.provider||'browser';toggle.title=provider==='edge-tts'?`Free neural Hindi female voice • ${d.voice||'Swara'}`:provider==='piper'?`Free local Hindi female voice • ${d.voice||'Priyamvada'}`:'Voice unavailable';}catch(_){} }
@@ -145,6 +225,6 @@
   toggle.onclick=()=>{enabled=!enabled;localStorage.setItem(KEY,String(enabled));if(!enabled){if(audio){audio.pause();audio=null;}if('speechSynthesis'in window)speechSynthesis.cancel();}render();};
   stop.onclick=()=>{if(audio){audio.pause();audio.currentTime=0;audio=null;}if('speechSynthesis'in window)speechSynthesis.cancel();render();};
   const chat=document.getElementById('chat'),model=document.getElementById('model');
-  if(chat){const observer=new MutationObserver(()=>{clearTimeout(timer);if(!enabled)return;timer=setTimeout(()=>{if(model&&/generating|listening/i.test(model.textContent||''))return;const bubbles=chat.querySelectorAll('.assistant .bubble');const last=bubbles[bubbles.length-1];if(last&&last.textContent.trim())speak(last.textContent.trim());},850);});observer.observe(chat,{subtree:true,childList:true,characterData:true});}
+  if(chat){const observer=new MutationObserver(()=>{clearTimeout(timer);if(!enabled)return;timer=setTimeout(()=>{if(model&&/generating|listening/i.test(model.textContent||''))return;const bubbles=chat.querySelectorAll('.assistant .bubble'),last=bubbles[bubbles.length-1];if(last&&last.textContent.trim())speak(last.textContent.trim());},850);});observer.observe(chat,{subtree:true,childList:true,characterData:true});}
   status();render();
 })();
