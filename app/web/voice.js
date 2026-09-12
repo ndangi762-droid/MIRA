@@ -1,4 +1,95 @@
 (() => {
+  /* MIRA reactive particle field — full dashboard background */
+  const particleStyle = document.createElement('style');
+  particleStyle.textContent = `
+    html,body{background:#030507!important}
+    #mira-particles{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;background:#030507}
+    .app{position:relative;z-index:1;background:transparent!important}
+    .sidebar,.center,.rightbar{background:transparent!important}
+    .sidebar{backdrop-filter:blur(2px)}
+    .center{background:radial-gradient(circle at 50% 35%,rgba(30,35,42,.10),transparent 42%)!important}
+    .mira-voice-bar{z-index:30!important}
+  `;
+  document.head.appendChild(particleStyle);
+
+  const canvas = document.createElement('canvas');
+  canvas.id = 'mira-particles';
+  document.body.prepend(canvas);
+  const ctx = canvas.getContext('2d');
+  const mouse = {x:-9999,y:-9999,active:false};
+  let W=0,H=0,dpr=1,particles=[];
+  const COUNT=window.innerWidth<800?95:180;
+  const GOLD='245,200,75';
+
+  function resize(){
+    dpr=Math.min(window.devicePixelRatio||1,2);
+    W=window.innerWidth; H=window.innerHeight;
+    canvas.width=Math.floor(W*dpr); canvas.height=Math.floor(H*dpr);
+    canvas.style.width=W+'px'; canvas.style.height=H+'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    if(!particles.length) init();
+  }
+  function init(){
+    particles=Array.from({length:COUNT},()=>({
+      x:Math.random()*W,y:Math.random()*H,
+      vx:(Math.random()-.5)*.22,vy:(Math.random()-.5)*.22,
+      r:Math.random()*1.35+.35,
+      a:Math.random()*.45+.18,
+      gold:Math.random()<.18,
+      seed:Math.random()*Math.PI*2
+    }));
+  }
+  function pointer(x,y){mouse.x=x;mouse.y=y;mouse.active=true}
+  window.addEventListener('pointermove',e=>pointer(e.clientX,e.clientY),{passive:true});
+  window.addEventListener('pointerleave',()=>mouse.active=false);
+  window.addEventListener('blur',()=>mouse.active=false);
+  window.addEventListener('resize',resize,{passive:true});
+
+  function draw(t){
+    ctx.clearRect(0,0,W,H);
+    for(const p of particles){
+      /* Strong, immediate mouse repulsion — particles jump away from cursor */
+      if(mouse.active){
+        const dx=p.x-mouse.x,dy=p.y-mouse.y;
+        const dist=Math.hypot(dx,dy);
+        const radius=145;
+        if(dist<radius && dist>.1){
+          const force=Math.pow(1-dist/radius,2)*2.7;
+          p.vx+=(dx/dist)*force;
+          p.vy+=(dy/dist)*force;
+        }
+      }
+      const speed=Math.hypot(p.vx,p.vy);
+      if(speed>.9){p.vx*=.91;p.vy*=.91}
+      p.vx+=(Math.sin(t*.00035+p.seed)*.002);
+      p.vy+=(Math.cos(t*.00031+p.seed)*.002);
+      p.vx*=.997;p.vy*=.997;
+      p.x+=p.vx;p.y+=p.vy;
+      if(p.x<-5)p.x=W+5;if(p.x>W+5)p.x=-5;
+      if(p.y<-5)p.y=H+5;if(p.y>H+5)p.y=-5;
+
+      const pulse=.72+.28*Math.sin(t*.0012+p.seed);
+      ctx.beginPath();ctx.arc(p.x,p.y,p.r*pulse,0,Math.PI*2);
+      ctx.fillStyle=p.gold?`rgba(${GOLD},${p.a})`:`rgba(220,228,238,${p.a*.72})`;
+      ctx.fill();
+    }
+    /* Connect nearby particles with very subtle lines */
+    for(let i=0;i<particles.length;i++){
+      const a=particles[i];
+      for(let j=i+1;j<particles.length;j++){
+        const b=particles[j],dx=a.x-b.x,dy=a.y-b.y,d=dx*dx+dy*dy;
+        if(d<6500){
+          const alpha=.055*(1-d/6500);
+          ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);
+          ctx.strokeStyle=`rgba(190,198,210,${alpha})`;ctx.lineWidth=.45;ctx.stroke();
+        }
+      }
+    }
+    requestAnimationFrame(draw);
+  }
+  resize();
+  requestAnimationFrame(draw);
+
   const KEY = 'mira_voice_enabled';
   let enabled = localStorage.getItem(KEY) === 'true';
   let audio = null;
@@ -76,9 +167,7 @@
     try {
       if (provider === 'edge-tts' || provider === 'piper' || provider === 'elevenlabs') await serverSpeak(text);
       else browserSpeak(text);
-    } catch (_) {
-      browserSpeak(text);
-    }
+    } catch (_) { browserSpeak(text); }
   }
 
   toggle.onclick = () => {
