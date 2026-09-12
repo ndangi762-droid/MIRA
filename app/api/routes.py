@@ -1,4 +1,7 @@
+import json
+
 from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from app.core.assistant import MIRA
 from app.files.document_store import save_upload, extract_text
@@ -25,7 +28,7 @@ class SessionRequest(BaseModel):
 
 @router.get("/api/health")
 async def health():
-    return {"status": "ok", "assistant": "MIRA", "version": "7.2.0", "memory": "ready", "documents": "ready", "sessions": "ready"}
+    return {"status": "ok", "assistant": "MIRA", "version": "7.3.0", "memory": "ready", "documents": "ready", "sessions": "ready", "streaming": "ready"}
 
 
 @router.post("/api/chat")
@@ -37,6 +40,23 @@ async def chat(req: ChatRequest):
         return {"assistant": "MIRA", "reply": reply, "session_id": session_id}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"MIRA backend error: {type(exc).__name__}") from exc
+
+
+@router.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest):
+    session_id = req.session_id.strip()
+    message = req.message.strip()
+    mira.memory.ensure_session(session_id)
+
+    async def events():
+        try:
+            async for delta in mira.stream(message, session_id):
+                yield json.dumps({"delta": delta}, ensure_ascii=False) + "\n"
+            yield json.dumps({"done": True, "session_id": session_id}, ensure_ascii=False) + "\n"
+        except Exception as exc:
+            yield json.dumps({"error": f"MIRA backend error: {type(exc).__name__}"}, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(events(), media_type="application/x-ndjson", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.get("/api/sessions")
