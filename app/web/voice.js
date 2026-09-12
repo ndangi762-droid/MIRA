@@ -33,9 +33,11 @@
       const r = await fetch('/api/voice/status');
       const d = await r.json();
       provider = d.provider || 'browser';
-      toggle.title = provider === 'elevenlabs'
-        ? 'Natural ElevenLabs Hindi voice'
-        : 'Browser fallback — configure ElevenLabs for natural voice';
+      toggle.title = provider === 'piper'
+        ? `Free local Hindi female voice • ${d.voice || 'Priyamvada'}`
+        : provider === 'elevenlabs'
+          ? 'Natural ElevenLabs Hindi voice'
+          : 'Voice unavailable';
     } catch (_) {}
   }
 
@@ -51,18 +53,19 @@
     speechSynthesis.speak(u);
   }
 
-  async function elevenSpeak(text) {
+  async function serverSpeak(text) {
     if (audio) { audio.pause(); audio = null; }
     const r = await fetch('/api/voice/speak', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({text})
     });
-    if (!r.ok) throw new Error('ElevenLabs voice unavailable');
+    if (!r.ok) throw new Error('Server voice unavailable');
     const blob = await r.blob();
-    audio = new Audio(URL.createObjectURL(blob));
-    audio.onended = () => { audio = null; render(); };
-    audio.onerror = () => { audio = null; render(); };
+    const url = URL.createObjectURL(blob);
+    audio = new Audio(url);
+    audio.onended = () => { URL.revokeObjectURL(url); audio = null; render(); };
+    audio.onerror = () => { URL.revokeObjectURL(url); audio = null; render(); };
     render();
     await audio.play();
   }
@@ -71,7 +74,7 @@
     if (!enabled || !text || text === lastSpoken) return;
     lastSpoken = text;
     try {
-      if (provider === 'elevenlabs') await elevenSpeak(text);
+      if (provider === 'piper' || provider === 'elevenlabs') await serverSpeak(text);
       else browserSpeak(text);
     } catch (_) {
       browserSpeak(text);
