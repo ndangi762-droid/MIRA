@@ -33,8 +33,9 @@
       const r = await fetch('/api/voice/status');
       const d = await r.json();
       provider = d.provider || 'browser';
-      if (provider === 'elevenlabs') toggle.title = 'Natural ElevenLabs Hindi voice';
-      else toggle.title = 'Browser voice fallback — configure ElevenLabs for natural voice';
+      toggle.title = provider === 'elevenlabs'
+        ? 'Natural ElevenLabs Hindi voice'
+        : 'Browser fallback — configure ElevenLabs for natural voice';
     } catch (_) {}
   }
 
@@ -94,11 +95,13 @@
   };
 
   const chat = document.getElementById('chat');
+  const model = document.getElementById('model');
   if (chat) {
     const observer = new MutationObserver(() => {
       clearTimeout(timer);
       if (!enabled) return;
       timer = setTimeout(() => {
+        if (model && /generating|listening/i.test(model.textContent || '')) return;
         const bubbles = chat.querySelectorAll('.assistant .bubble');
         const last = bubbles[bubbles.length - 1];
         if (last && last.textContent.trim()) speak(last.textContent.trim());
