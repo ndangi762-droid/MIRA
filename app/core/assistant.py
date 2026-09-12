@@ -1,6 +1,7 @@
 import re
 
 from app.core.prompts import SYSTEM_PROMPT
+from app.core.style_engine import StyleEngine
 from app.llm.client import LLMClient
 from app.memory.store import MemoryStore
 from app.tools.engine import ActionEngine
@@ -11,6 +12,7 @@ class MIRA:
         self.llm = LLMClient()
         self.memory = MemoryStore()
         self.actions = ActionEngine()
+        self.style = StyleEngine()
 
     def _memory_context(self):
         items = self.memory.memories(limit=20)
@@ -54,9 +56,15 @@ class MIRA:
     async def chat(self, message: str, session_id: str = "boss") -> str:
         saved = self._capture_memory_request(message)
         history = self.memory.recent(limit=10, session_id=session_id)
+        style_context = self.style.examples_for(message, limit=3)
+        style_block = (
+            "\n\n" + style_context +
+            "\nUse these examples as STYLE guidance only. Do not copy them unless they directly fit the conversation."
+            if style_context else ""
+        )
         if saved:
             response = await self.llm.generate(
-                SYSTEM_PROMPT + "\n\nIMPORTANT: Boss explicitly asked to save a memory. Confirm briefly and naturally that it has been saved.",
+                SYSTEM_PROMPT + style_block + "\n\nIMPORTANT: Boss explicitly asked to save a memory. Confirm briefly and naturally that it has been saved.",
                 history, message,
             )
         else:
@@ -70,7 +78,7 @@ class MIRA:
                     response = f"Boss, action run nahi ho saka: {type(exc).__name__}."
             else:
                 context = self._memory_context()
-                system = SYSTEM_PROMPT + ("\n\n" + context if context else "")
+                system = SYSTEM_PROMPT + style_block + ("\n\n" + context if context else "")
                 web_search = message.lower().startswith(("search web ", "web search ", "internet par search ", "latest search "))
                 if web_search:
                     clean = re.sub(r"^(search web|web search|internet par search|latest search)\s+", "", message, flags=re.I)
