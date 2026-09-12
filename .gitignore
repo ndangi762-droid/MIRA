@@ -4,3 +4,5 @@ __pycache__/
 .env
 data/*.db
 node_modules/
+models/piper/*.onnx
+models/piper/*.onnx.json
