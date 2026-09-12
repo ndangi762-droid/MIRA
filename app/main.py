@@ -21,7 +21,8 @@ app.include_router(router)
 
 @app.get("/", response_class=HTMLResponse)
 def home():
-    return (Path(__file__).parent / "web" / "index.html").read_text(encoding="utf-8")
+    html = (Path(__file__).parent / "web" / "index.html").read_text(encoding="utf-8")
+    return html.replace("</body>", '<script src="/voice.js"></script></body>')
 
 
 @app.get("/voice.js")
