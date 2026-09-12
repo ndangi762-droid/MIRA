@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 from app.core.assistant import MIRA
+from app.files.document_store import save_upload, extract_text
 
 router = APIRouter()
 mira = MIRA()
@@ -19,7 +20,7 @@ class RememberRequest(BaseModel):
 
 @router.get("/api/health")
 async def health():
-    return {"status": "ok", "assistant": "MIRA", "version": "6.0.0", "memory": "ready"}
+    return {"status": "ok", "assistant": "MIRA", "version": "7.1.0", "memory": "ready", "documents": "ready"}
 
 
 @router.post("/api/chat")
@@ -46,3 +47,22 @@ async def save_memory(req: RememberRequest):
 async def delete_memory(key: str):
     mira.forget(key)
     return {"assistant": "MIRA", "status": "deleted", "key": key}
+
+
+@router.post("/api/files/upload")
+async def upload_file(file: UploadFile = File(...)):
+    try:
+        data = await file.read()
+        return save_upload(file.filename or "document.txt", data)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/api/files/read")
+async def read_document(name: str):
+    try:
+        return extract_text(name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=f"file not found: {name}") from exc
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
