@@ -1,7 +1,7 @@
 """Safe action engine for MIRA.
 
-The engine intentionally exposes a small allowlist of local tools. Natural-language
-routing is conservative: only explicit, unambiguous requests are executed.
+The engine exposes a small allowlist of local tools. Natural-language routing
+is conservative: only explicit, unambiguous requests are executed.
 """
 from __future__ import annotations
 
@@ -36,27 +36,25 @@ class ActionEngine:
         text = message.strip()
         low = text.lower()
 
-        # Calculator: explicit calculation phrasing only.
         if low.startswith(("calculate ", "calc ", "hisab ", "hisaab ")):
             expression = re.sub(r"^(calculate|calc|hisab|hisaab)\s+", "", text, flags=re.I)
             return "calculator", {"expression": expression}
 
-        # Time: explicit current-time questions.
         if any(p in low for p in (
-            "what time is it",
-            "current time",
-            "abhi kitne baje",
-            "abhi time kya hai",
+            "what time is it", "current time", "abhi kitne baje", "abhi time kya hai",
         )):
             return "current_time", {}
 
-        # Workspace listing/search are deliberately explicit.
         if low in {"list files", "files dikhao", "workspace files dikhao", "meri files dikhao"}:
             return "list_files", {}
 
         m = re.match(r"^(?:search files|files search karo|file search karo)\s+(.+)$", text, re.I)
         if m:
             return "search_files", {"query": m.group(1).strip()}
+
+        m = re.match(r"^(?:read|open|padho|padh)\s+(?:file\s+)?[\"']?([^\"']+?)[\"']?$", text, re.I)
+        if m and m.group(1).strip().lower().endswith((".txt", ".md")):
+            return "read_file", {"name": m.group(1).strip()}
 
         return None
 
