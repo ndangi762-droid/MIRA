@@ -6,7 +6,7 @@
   let lastSpoken = '';
   let provider = 'browser';
 
-  /* MIRA core: same slow reactive motion, redesigned to match the supplied cyber-particle sphere. */
+  /* MIRA core: same cyber-particle sphere, with stronger full-screen cursor interaction. */
   const particleStyle = document.createElement('style');
   particleStyle.textContent = `
     .core{background:transparent!important;box-shadow:none!important;filter:none!important;overflow:visible!important;width:430px!important;height:430px!important;margin-bottom:18px!important}
@@ -22,7 +22,7 @@
   canvas.className = 'mira-particle-field';
   document.body.prepend(canvas);
   const ctx = canvas.getContext('2d', { alpha: true });
-  const mouse = { x: -9999, y: -9999, active: false };
+  const mouse = { x: -9999, y: -9999, px: -9999, py: -9999, vx: 0, vy: 0, active: false };
   let particles = [];
   let coreCanvas = null;
   let coreCtx = null;
@@ -96,7 +96,6 @@
     const cx = w / 2, cy = h / 2;
     const rotY = t * .00008, rotX = Math.sin(t * .00012) * .055;
 
-    /* Soft energy shell like the supplied reference, without becoming a solid orb. */
     const glow = coreCtx.createRadialGradient(cx, cy, 8, cx, cy, w * .43);
     glow.addColorStop(0, 'rgba(255,115,25,.10)');
     glow.addColorStop(.28, 'rgba(255,55,20,.035)');
@@ -115,14 +114,13 @@
       const dx = (rect.left + cx + x) - mouse.x;
       const dy = (rect.top + cy + y) - mouse.y;
       const d = Math.hypot(dx, dy) || 1;
-      if (mouse.active && d < 155) {
-        const force = Math.pow(1 - d / 155, 1.65) * 8.5;
+      if (mouse.active && d < 180) {
+        const force = Math.pow(1 - d / 180, 1.55) * 9.5;
         p.vx += (dx / d) * force * .18;
         p.vy += (dy / d) * force * .18;
         p.vz += force * .12;
       }
 
-      /* Same behavior as before: fast cursor reaction, slow spring return. */
       p.vx *= .90; p.vy *= .90; p.vz *= .90;
       p.x += p.vx; p.y += p.vy; p.z += p.vz;
       p.x += (Math.sin(p.phase + t * .00018) * 185 - p.x) * .00055;
@@ -162,7 +160,6 @@
       coreCtx.shadowBlur = 0;
     }
 
-    /* Sparse orbit-like energy trails, matching the reference's cyber feel. */
     coreCtx.globalCompositeOperation = 'lighter';
     for (let k=0;k<7;k++) {
       const rr = 118 + k * 17;
@@ -190,19 +187,39 @@
       p.y += p.vy + Math.cos(t * .00013 + p.seed) * .018;
       if (p.x < -10) p.x = w + 10; if (p.x > w + 10) p.x = -10;
       if (p.y < -10) p.y = h + 10; if (p.y > h + 10) p.y = -10;
+
       if (mouse.active) {
-        const dx=p.x-mouse.x,dy=p.y-mouse.y,d=Math.hypot(dx,dy)||1,radius=135;
-        if(d<radius){const force=(1-d/radius)*.95;p.x+=(dx/d)*force;p.y+=(dy/d)*force;}
+        const dx = p.x - mouse.x, dy = p.y - mouse.y;
+        const d = Math.hypot(dx, dy) || 1;
+        const radius = Math.max(w, h) * .42;
+        if (d < radius) {
+          const proximity = 1 - d / radius;
+          const force = Math.pow(proximity, 1.65) * 1.8;
+          p.vx += (dx / d) * force * .018;
+          p.vy += (dy / d) * force * .018;
+          p.vx += mouse.vx * proximity * .035;
+          p.vy += mouse.vy * proximity * .035;
+        }
       }
+
+      p.vx *= .994; p.vy *= .994;
       ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
       ctx.fillStyle=p.gold?`rgba(245,200,75,${p.a})`:`rgba(190,200,215,${p.a*.48})`; ctx.fill();
     }
     drawCore(t);
+    mouse.vx *= .82; mouse.vy *= .82;
     requestAnimationFrame(animateParticles);
   }
 
-  addEventListener('pointermove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;mouse.active=true},{passive:true});
-  addEventListener('pointerleave',()=>{mouse.active=false});
+  addEventListener('pointermove',e=>{
+    if (mouse.px > -9000) {
+      mouse.vx = Math.max(-28, Math.min(28, e.clientX - mouse.px));
+      mouse.vy = Math.max(-28, Math.min(28, e.clientY - mouse.py));
+    }
+    mouse.px=e.clientX; mouse.py=e.clientY;
+    mouse.x=e.clientX; mouse.y=e.clientY; mouse.active=true;
+  },{passive:true});
+  addEventListener('pointerleave',()=>{mouse.active=false;mouse.vx=0;mouse.vy=0;mouse.px=-9999;mouse.py=-9999});
   addEventListener('resize',resizeParticles);
   resizeParticles();
   requestAnimationFrame(animateParticles);
