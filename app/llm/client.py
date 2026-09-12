@@ -1,25 +1,35 @@
 from __future__ import annotations
 
-from app.config import LLM_PROVIDER, OPENAI_API_KEY
+import os
+
 from app.llm.ollama import OllamaClient
 from app.llm.openai_client import OpenAIClient
 
 
 class LLMClient:
-    """Select OpenAI when configured, otherwise keep local Ollama as fallback."""
+    """Select an LLM provider at runtime.
+
+    ``auto`` prefers OpenAI only when an API key is currently configured;
+    otherwise it falls back to local Ollama. Reading environment variables at
+    runtime also keeps tests and local configuration changes deterministic.
+    """
 
     def __init__(self):
         self.openai = OpenAIClient()
         self.ollama = OllamaClient()
-        self.provider = LLM_PROVIDER
+
+    @property
+    def provider(self) -> str:
+        return os.getenv("LLM_PROVIDER", "auto").strip().lower()
 
     @property
     def active_provider(self) -> str:
-        if self.provider == "openai":
+        provider = self.provider
+        if provider == "openai":
             return "openai"
-        if self.provider == "ollama":
+        if provider == "ollama":
             return "ollama"
-        return "openai" if OPENAI_API_KEY.strip() else "ollama"
+        return "openai" if os.getenv("OPENAI_API_KEY", "").strip() else "ollama"
 
     async def generate(self, system: str, history: list[dict], message: str, web_search: bool = False) -> str:
         if self.active_provider == "openai":
