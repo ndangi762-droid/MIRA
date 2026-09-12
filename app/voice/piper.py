@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -17,19 +18,30 @@ class PiperTTS:
 
     @property
     def configured(self) -> bool:
-        return bool(self._binary_path() and self.model_path.exists())
+        return self.model_path.exists() and self._command() is not None
 
-    def _binary_path(self) -> str | None:
-        return shutil.which(self.binary)
+    def _command(self) -> list[str] | None:
+        # Prefer the Piper executable installed alongside MIRA's Python venv.
+        venv_piper = Path(sys.executable).with_name("piper.exe")
+        if venv_piper.exists():
+            return [str(venv_piper)]
+        found = shutil.which(self.binary)
+        if found:
+            return [found]
+        # Piper TTS also exposes a Python module entry point.
+        return [sys.executable, "-m", "piper"]
 
     async def synthesize(self, text: str) -> bytes:
-        if not self.configured:
-            raise RuntimeError("Piper is not installed/configured. Run scripts\\setup_piper.ps1 first.")
+        if not self.model_path.exists():
+            raise RuntimeError("Piper Hindi voice model is missing. Run scripts\\setup_piper.ps1 first.")
+
+        command = self._command()
+        if command is None:
+            raise RuntimeError("Piper TTS is not installed in the MIRA environment.")
 
         with tempfile.TemporaryDirectory(prefix="mira_piper_") as tmp:
             wav_path = Path(tmp) / "speech.wav"
-            cmd = [
-                self._binary_path() or self.binary,
+            cmd = command + [
                 "--model", str(self.model_path),
                 "--output_file", str(wav_path),
             ]
