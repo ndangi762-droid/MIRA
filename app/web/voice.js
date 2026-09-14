@@ -36,6 +36,21 @@
     .substate{color:#506472!important}.state{color:#6e9eb5!important}.metric{color:#526773!important}.metric b{color:#8fb9c9!important}.side-info{color:#506472!important}.side-info b{color:#82b8ce!important}.brand small{color:#557487!important}
     .composer{bottom:31px!important}.composer > div:last-child{color:#64818e!important;font-size:8px!important;letter-spacing:3px!important;margin-top:8px!important}
     @media(max-width:720px){.core{width:300px!important;height:300px!important}.mira-core-canvas{width:300px!important;height:300px!important}.reactor{transform:translateY(3px)}.composer{bottom:21px!important}.composer > div:last-child{font-size:7px!important;letter-spacing:2px!important}}
+
+    /* CHAT BOARD: behave like a real conversation, never climb over the reactor */
+    .chat{top:92px!important;bottom:118px!important;max-height:none!important;height:auto!important;overflow-y:auto!important;overflow-x:hidden!important;padding:18px 8px 26px!important;gap:12px!important;justify-content:flex-start!important;align-items:center!important;scroll-behavior:smooth!important;z-index:8!important}
+    .chat.has-messages{display:flex!important}
+    .chat.has-messages ~ .composer{z-index:12!important}
+    .chat .msg{width:100%!important;flex:0 0 auto!important}
+    .chat .bubble{max-width:min(760px,88%)!important;padding:10px 16px!important;text-align:left!important;font-size:13px!important;line-height:1.6!important;border-radius:14px!important}
+    .chat .msg.user{justify-content:flex-end!important}
+    .chat .msg.user .bubble{background:rgba(18,76,104,.16)!important;color:#dceff5!important}
+    .chat .msg.assistant{justify-content:flex-start!important}
+    .chat .msg.assistant .bubble{background:rgba(5,12,18,.82)!important;color:#b9eaff!important}
+    .chat.has-messages ~ .stage .reactor,.chat.has-messages ~ .stage .readout,.chat.has-messages ~ .metrics{display:none!important}
+    body.chat-active .reactor,body.chat-active .readout,body.chat-active .metrics{display:none!important}
+    body.chat-active .chat{top:84px!important;bottom:112px!important}
+    @media(max-width:700px){.chat{top:68px!important;bottom:104px!important;padding:12px 7px 18px!important;gap:10px!important}.chat .bubble{max-width:94%!important;font-size:12px!important;padding:9px 13px!important}.chat .msg.user{justify-content:flex-end!important}.chat .msg.assistant{justify-content:flex-start!important}.body.chat-active .chat{top:64px!important;bottom:98px!important}}
   `;
   document.head.appendChild(particleStyle);
 
@@ -64,5 +79,12 @@
   async function serverSpeak(text){if(audio){audio.pause();audio=null}const r=await fetch('/api/voice/speak',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});if(!r.ok)throw new Error('Server voice unavailable');const blob=await r.blob(),url=URL.createObjectURL(blob);audio=new Audio(url);audio.onended=()=>{URL.revokeObjectURL(url);audio=null;render()};audio.onerror=()=>{URL.revokeObjectURL(url);audio=null;render()};render();await audio.play()}
   async function speak(text){if(!enabled||!text||text===lastSpoken)return;lastSpoken=text;try{await serverSpeak(text)}catch(_){browserSpeak(text)}}
   toggle.onclick=()=>{enabled=!enabled;localStorage.setItem(KEY,String(enabled));if(!enabled){if(audio){audio.pause();audio=null}if('speechSynthesis'in window)speechSynthesis.cancel()}render()};stop.onclick=()=>{if(audio){audio.pause();audio.currentTime=0;audio=null}if('speechSynthesis'in window)speechSynthesis.cancel();render()};
-  const chat=document.getElementById('chat'),model=document.getElementById('model');if(chat){const observer=new MutationObserver(()=>{clearTimeout(timer);if(!enabled)return;timer=setTimeout(()=>{if(model&&/generating|listening/i.test(model.textContent||''))return;const bubbles=chat.querySelectorAll('.assistant .bubble'),last=bubbles[bubbles.length-1];if(last&&last.textContent.trim())speak(last.textContent.trim())},850)});observer.observe(chat,{subtree:true,childList:true,characterData:true})}status();render();
+  const chat=document.getElementById('chat'),model=document.getElementById('model');
+  if(chat){
+    const updateChatMode=()=>{document.body.classList.toggle('chat-active',chat.children.length>0);chat.classList.toggle('has-messages',chat.children.length>0)};
+    updateChatMode();
+    const observer=new MutationObserver(()=>{updateChatMode();clearTimeout(timer);if(!enabled)return;timer=setTimeout(()=>{if(model&&/generating|listening/i.test(model.textContent||''))return;const bubbles=chat.querySelectorAll('.assistant .bubble'),last=bubbles[bubbles.length-1];if(last&&last.textContent.trim())speak(last.textContent.trim())},850)});
+    observer.observe(chat,{subtree:true,childList:true,characterData:true});
+  }
+  status();render();
 })();
