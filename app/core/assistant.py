@@ -7,6 +7,7 @@ from app.llm.client import LLMClient
 from app.memory.smart_memory import SmartMemory
 from app.memory.store import MemoryStore
 from app.tools.engine import ActionEngine
+from app.files.document_store import extract_text
 
 
 class MIRA:
@@ -49,7 +50,6 @@ class MIRA:
         return category
 
     def _memory_command(self, message: str):
-        """Handle explicit memory inspection/removal without sending sensitive commands to the LLM."""
         low = message.strip().lower()
         show_triggers = ("meri memory dikhao", "memory dikhao", "show my memories", "show memory", "what do you remember about me", "tumhe mere baare mein kya yaad hai")
         if low in show_triggers:
@@ -58,7 +58,6 @@ class MIRA:
                 return "Boss, abhi long-term memory mein kuch saved nahi hai."
             lines = [f"• [{item['category']}] {item['value']}" for item in items]
             return "Boss, mujhe ye important baatein yaad hain:\n" + "\n".join(lines)
-
         for prefix in ("memory search ", "search memory "):
             if low.startswith(prefix):
                 query = message.strip()[len(prefix):].strip()
@@ -68,7 +67,6 @@ class MIRA:
                 if not items:
                     return f"Boss, '{query}' se related memory nahi mili."
                 return "Boss, ye memories mili:\n" + "\n".join(f"• [{x['category']}] {x['value']}" for x in items)
-
         for prefix in ("memory bhool jao ", "memory bhul jao ", "forget memory ", "forget "):
             if low.startswith(prefix):
                 query = message.strip()[len(prefix):].strip()
@@ -102,6 +100,24 @@ class MIRA:
         system = SYSTEM_PROMPT + style_block + memory_notice + ("\n\n" + context if context else "")
         return system, history
 
+    async def ask_document(self, filename: str, question: str, session_id: str = "boss") -> str:
+        """Answer a question using an uploaded document as the primary source."""
+        document = extract_text(filename)
+        text = document["text"]
+        if not text.strip():
+            return "Boss, is document mein readable text nahi mila. Agar ye scanned PDF hai to OCR support next step mein add karenge."
+        text = text[:90000]
+        system = SYSTEM_PROMPT + "\n\nDOCUMENT MODE: Answer from the uploaded document as the primary source. Do not invent facts. If the answer is not present, clearly say it is not found in the document. Reply naturally in Roman Hindi/Hinglish unless Boss asks otherwise." + f"\n\nDOCUMENT NAME: {document['file']}\nDOCUMENT TEXT:\n{text}"
+        history = self.memory.recent(limit=8, session_id=session_id)
+        parts = []
+        async for delta in self.llm.stream(system, history, question.strip()):
+            parts.append(delta)
+        response = "".join(parts)
+        self.memory.ensure_session(session_id)
+        self.memory.add("user", f"[Document: {document['file']}] {question.strip()}", session_id)
+        self.memory.add("assistant", response, session_id)
+        return response
+
     async def chat(self, message: str, session_id: str = "boss") -> str:
         parts = []
         async for delta in self.stream(message, session_id):
@@ -115,11 +131,9 @@ class MIRA:
             self.memory.add("user", message, session_id)
             self.memory.add("assistant", memory_command, session_id)
             return
-
         saved = self._capture_memory_request(message)
         smart_category = None if saved else self._capture_smart_memory(message)
         history = self.memory.recent(limit=10, session_id=session_id)
-
         if saved:
             style_context = self.style.examples_for(message, limit=3)
             style_block = ("\n\n" + style_context + "\nUse these examples as STYLE guidance only. Do not copy them unless they directly fit the conversation." if style_context else "")
@@ -155,7 +169,6 @@ class MIRA:
                         parts.append(delta)
                         yield delta
                     response = "".join(parts)
-
         self.memory.add("user", message, session_id)
         self.memory.add("assistant", response, session_id)
 
