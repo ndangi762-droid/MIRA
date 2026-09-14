@@ -14,7 +14,7 @@ app.add_middleware(
     allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
 app.include_router(router)
 
@@ -22,12 +22,20 @@ app.include_router(router)
 @app.get("/", response_class=HTMLResponse)
 def home():
     html = (Path(__file__).parent / "web" / "index.html").read_text(encoding="utf-8")
-    return html.replace("</body>", '<script src="/voice.js"></script></body>')
+    return html.replace("</body>", '<script src="/voice.js"></script><script src="/document.js"></script></body>')
 
 
 @app.get("/voice.js")
 def voice_script():
     return Response(
         content=(Path(__file__).parent / "web" / "voice.js").read_text(encoding="utf-8"),
+        media_type="application/javascript",
+    )
+
+
+@app.get("/document.js")
+def document_script():
+    return Response(
+        content=(Path(__file__).parent / "web" / "document.js").read_text(encoding="utf-8"),
         media_type="application/javascript",
     )
