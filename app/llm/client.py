@@ -51,7 +51,7 @@ class LLMClient:
                 return await self.ollama.generate(system, history, message)
 
         if web_search:
-            raise RuntimeError("web search requires the OpenAI provider")
+            raise RuntimeError("web search requires a web-enabled provider")
 
         try:
             return await self.ollama.generate(system, history, message)
@@ -87,7 +87,7 @@ class LLMClient:
                 return
 
         if web_search:
-            raise RuntimeError("web search requires the OpenAI provider")
+            raise RuntimeError("web search requires a web-enabled provider")
 
         try:
             async for delta in self.ollama.stream(system, history, message):
