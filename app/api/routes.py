@@ -1,4 +1,5 @@
 import json
+import logging
 
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import Response, StreamingResponse
@@ -7,6 +8,7 @@ from app.core.assistant import MIRA
 from app.files.document_store import save_upload, extract_text
 from app.voice.edge_tts import EdgeTTS
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 mira = MIRA()
 tts = EdgeTTS()
@@ -45,7 +47,8 @@ async def chat(req: ChatRequest):
         reply = await mira.chat(req.message.strip(), session_id)
         return {"assistant": "MIRA", "reply": reply, "session_id": session_id}
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"MIRA backend error: {type(exc).__name__}") from exc
+        logger.exception("MIRA chat failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail=f"MIRA backend error: {type(exc).__name__}: {str(exc)[:300]}") from exc
 
 
 @router.post("/api/chat/stream")
@@ -60,7 +63,8 @@ async def chat_stream(req: ChatRequest):
                 yield json.dumps({"delta": delta}, ensure_ascii=False) + "\n"
             yield json.dumps({"done": True, "session_id": session_id}, ensure_ascii=False) + "\n"
         except Exception as exc:
-            yield json.dumps({"error": f"MIRA backend error: {type(exc).__name__}"}, ensure_ascii=False) + "\n"
+            logger.exception("MIRA stream failed: %s", type(exc).__name__)
+            yield json.dumps({"error": f"MIRA backend error: {type(exc).__name__}: {str(exc)[:300]}"}, ensure_ascii=False) + "\n"
 
     return StreamingResponse(events(), media_type="application/x-ndjson", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
