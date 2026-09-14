@@ -6,11 +6,11 @@ from app.config import GEMINI_API_KEY, GEMINI_MODEL
 
 
 class GeminiClient:
-    """Minimal Gemini REST client with native SSE streaming."""
+    """Gemini REST client for Render/cloud deployments."""
 
     def __init__(self):
         self.api_key = GEMINI_API_KEY.strip()
-        self.model = GEMINI_MODEL
+        self.model = GEMINI_MODEL.strip() or "gemini-3.1-flash-lite"
         self.base_url = "https://generativelanguage.googleapis.com/v1beta/models"
 
     @property
@@ -41,20 +41,33 @@ class GeminiClient:
             "Content-Type": "application/json",
         }
 
+    def _url(self, method: str) -> str:
+        return f"{self.base_url}/{self.model}:{method}"
+
+    @staticmethod
+    def _raise_with_context(response: httpx.Response) -> None:
+        if response.is_error:
+            detail = response.text.strip().replace("\n", " ")
+            if len(detail) > 800:
+                detail = detail[:800]
+            raise RuntimeError(f"Gemini HTTP {response.status_code}: {detail}")
+
     async def generate(self, system: str, history: list[dict], message: str, web_search: bool = False) -> str:
         if not self.available:
             raise RuntimeError("GEMINI_API_KEY is not configured")
         if web_search:
             raise RuntimeError("web search is not enabled for the free Gemini provider")
 
-        url = f"{self.base_url}/{self.model}:generateContent"
-        async with httpx.AsyncClient(timeout=120) as client:
+        # Render may expose proxy environment variables. Gemini is a direct
+        # HTTPS API, so bypassing inherited proxy settings avoids false
+        # httpx.ConnectError failures on cloud instances.
+        async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
             response = await client.post(
-                url,
+                self._url("generateContent"),
                 headers=self._headers(),
                 json=self._payload(system, history, message),
             )
-            response.raise_for_status()
+            self._raise_with_context(response)
             data = response.json()
 
         try:
@@ -68,15 +81,15 @@ class GeminiClient:
         if web_search:
             raise RuntimeError("web search is not enabled for the free Gemini provider")
 
-        url = f"{self.base_url}/{self.model}:streamGenerateContent?alt=sse"
-        async with httpx.AsyncClient(timeout=120) as client:
+        url = self._url("streamGenerateContent") + "?alt=sse"
+        async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
             async with client.stream(
                 "POST",
                 url,
                 headers=self._headers(),
                 json=self._payload(system, history, message),
             ) as response:
-                response.raise_for_status()
+                self._raise_with_context(response)
                 async for line in response.aiter_lines():
                     if not line or not line.startswith("data:"):
                         continue
