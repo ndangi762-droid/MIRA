@@ -5,9 +5,9 @@ from app.config import OLLAMA_BASE_URL, OLLAMA_MODEL
 
 
 class OllamaClient:
-    def __init__(self):
+    def __init__(self, model: str | None = None):
         self.url = OLLAMA_BASE_URL.rstrip("/") + "/api/chat"
-        self.model = OLLAMA_MODEL
+        self.model = model or OLLAMA_MODEL
 
     def _messages(self, system: str, history: list[dict], message: str) -> list[dict]:
         messages = [{"role": "system", "content": system}]
