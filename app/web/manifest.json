@@ -1,0 +1,19 @@
+{
+  "name": "MIRA — NRJ Core",
+  "short_name": "MIRA",
+  "description": "NRJ Core personal AI assistant",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#020407",
+  "theme_color": "#020407",
+  "icons": [
+    {
+      "src": "/mira-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
