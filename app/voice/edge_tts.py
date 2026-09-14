@@ -12,9 +12,10 @@ class EdgeTTS:
     """Free online Microsoft Edge neural TTS adapter. No API key required."""
 
     def __init__(self):
-        self.voice = os.getenv("EDGE_TTS_VOICE", "hi-IN-SwaraNeural")
-        self.rate = os.getenv("EDGE_TTS_RATE", "-2%")
-        self.pitch = os.getenv("EDGE_TTS_PITCH", "+0Hz")
+        # Ananya is a clean, natural Hindi female neural voice for MIRA.
+        self.voice = os.getenv("EDGE_TTS_VOICE", "hi-IN-AnanyaNeural")
+        self.rate = os.getenv("EDGE_TTS_RATE", "-4%")
+        self.pitch = os.getenv("EDGE_TTS_PITCH", "-1Hz")
         self.volume = os.getenv("EDGE_TTS_VOLUME", "+0%")
 
     @property
