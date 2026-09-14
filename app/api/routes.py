@@ -19,6 +19,12 @@ class ChatRequest(BaseModel):
     session_id: str = Field(default="boss", min_length=1, max_length=100)
 
 
+class DocumentAskRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=200)
+    question: str = Field(min_length=1, max_length=12000)
+    session_id: str = Field(default="boss", min_length=1, max_length=100)
+
+
 class TTSRequest(BaseModel):
     text: str = Field(min_length=1, max_length=5000)
 
@@ -36,7 +42,7 @@ class SessionRequest(BaseModel):
 
 @router.get("/api/health")
 async def health():
-    return {"status": "ok", "assistant": "MIRA", "version": "7.6.0", "memory": "ready", "documents": "ready", "sessions": "ready", "streaming": "ready", "voice": "edge-hindi-female"}
+    return {"status": "ok", "assistant": "MIRA", "version": "7.7.0", "memory": "ready", "documents": "qa-ready", "sessions": "ready", "streaming": "ready", "voice": "edge-hindi-female"}
 
 
 @router.post("/api/chat")
@@ -67,6 +73,19 @@ async def chat_stream(req: ChatRequest):
             yield json.dumps({"error": f"MIRA backend error: {type(exc).__name__}: {str(exc)[:300]}"}, ensure_ascii=False) + "\n"
 
     return StreamingResponse(events(), media_type="application/x-ndjson", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/api/documents/ask")
+async def ask_document(req: DocumentAskRequest):
+    try:
+        return {"assistant": "MIRA", "file": req.filename.strip(), "reply": await mira.ask_document(req.filename.strip(), req.question.strip(), req.session_id.strip())}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"file not found: {req.filename}")
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("MIRA document Q&A failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail=f"Document Q&A error: {type(exc).__name__}: {str(exc)[:300]}") from exc
 
 
 @router.post("/api/voice/speak")
