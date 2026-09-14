@@ -30,9 +30,7 @@ class MemoryStore:
                 conn.execute("ALTER TABLE messages ADD COLUMN session_id TEXT NOT NULL DEFAULT 'boss'")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_session_id_id ON messages(session_id, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC)")
-            conn.execute(
-                "INSERT OR IGNORE INTO sessions(id, title) VALUES ('boss', 'Main chat')"
-            )
+            conn.execute("INSERT OR IGNORE INTO sessions(id, title) VALUES ('boss', 'Main chat')")
 
     def ensure_session(self, session_id: str, title: str = "New chat"):
         session_id = (session_id or "boss").strip() or "boss"
@@ -41,22 +39,25 @@ class MemoryStore:
                 "INSERT OR IGNORE INTO sessions(id, title) VALUES (?, ?)",
                 (session_id, title.strip() or "New chat"),
             )
-            conn.execute(
-                "UPDATE sessions SET updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (session_id,),
-            )
+            conn.execute("UPDATE sessions SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (session_id,))
 
     def add(self, role: str, content: str, session_id: str = "boss"):
         self.ensure_session(session_id)
+        content = (content or "").strip()
         with sqlite3.connect(MEMORY_DB) as conn:
             conn.execute(
                 "INSERT INTO messages(session_id, role, content) VALUES (?, ?, ?)",
                 (session_id, role, content),
             )
-            conn.execute(
-                "UPDATE sessions SET updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                (session_id,),
-            )
+            # Give a new conversation a useful ChatGPT-style title from its first user message.
+            if role == "user":
+                row = conn.execute("SELECT title FROM sessions WHERE id=?", (session_id,)).fetchone()
+                if row and row[0] in ("New chat", "Main chat"):
+                    title = " ".join(content.split())[:52].strip()
+                    if len(content) > 52:
+                        title += "…"
+                    conn.execute("UPDATE sessions SET title=? WHERE id=?", (title or "New chat", session_id))
+            conn.execute("UPDATE sessions SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (session_id,))
 
     def recent(self, limit: int = 8, session_id: str = "boss"):
         with sqlite3.connect(MEMORY_DB) as conn:
