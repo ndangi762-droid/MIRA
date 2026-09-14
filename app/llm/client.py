@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import os
 
+from app.llm.gemini_client import GeminiClient
 from app.llm.ollama import OllamaClient
 from app.llm.openai_client import OpenAIClient
 
 
 class LLMClient:
-    """Select an LLM provider at runtime and fail over safely when possible."""
+    """Select an LLM provider at runtime with Gemini free-tier support."""
 
     def __init__(self):
+        self.gemini = GeminiClient()
         self.openai = OpenAIClient()
         self.ollama = OllamaClient()
         self.ollama_fallback = OllamaClient(os.getenv("OLLAMA_FALLBACK_MODEL", "llama3.2:3b"))
@@ -21,14 +23,26 @@ class LLMClient:
     @property
     def active_provider(self) -> str:
         provider = self.provider
-        if provider == "openai":
+        if provider in {"gemini", "openai", "ollama"}:
+            return provider
+        if self.gemini.available:
+            return "gemini"
+        if self.openai.available:
             return "openai"
-        if provider == "ollama":
-            return "ollama"
-        return "openai" if self.openai.available else "ollama"
+        return "ollama"
 
     async def generate(self, system: str, history: list[dict], message: str, web_search: bool = False) -> str:
-        if self.active_provider == "openai":
+        active = self.active_provider
+
+        if active == "gemini":
+            try:
+                return await self.gemini.generate(system, history, message, web_search=web_search)
+            except Exception:
+                if self.openai.available and not web_search:
+                    return await self.openai.generate(system, history, message)
+                raise
+
+        if active == "openai":
             try:
                 return await self.openai.generate(system, history, message, web_search=web_search)
             except Exception:
@@ -47,8 +61,21 @@ class LLMClient:
             return await self.ollama_fallback.generate(system, history, message)
 
     async def stream(self, system: str, history: list[dict], message: str, web_search: bool = False):
-        """Yield response text incrementally, with a safe Ollama model fallback."""
-        if self.active_provider == "openai":
+        """Yield response text incrementally with Gemini/Ollama support."""
+        active = self.active_provider
+
+        if active == "gemini":
+            try:
+                async for delta in self.gemini.stream(system, history, message, web_search=web_search):
+                    yield delta
+                return
+            except Exception:
+                if self.openai.available and not web_search:
+                    yield await self.openai.generate(system, history, message)
+                    return
+                raise
+
+        if active == "openai":
             try:
                 yield await self.openai.generate(system, history, message, web_search=web_search)
                 return
