@@ -4,6 +4,7 @@
   let audio = null;
   let timer = null;
   let lastSpoken = '';
+  // Server voice is the default. This prevents the first reply from falling back to browser TTS before /api/voice/status returns.
   let provider = 'edge-tts';
 
   const particleStyle = document.createElement('style');
@@ -13,7 +14,7 @@
     .mira-particle-field{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
     .center,.sidebar,.rightbar,.topbar,.composer-wrap,.welcome{position:relative;z-index:1}
     .mira-core-canvas{position:absolute;left:50%;top:50%;width:430px;height:430px;transform:translate(-50%,-50%);pointer-events:none;overflow:visible;z-index:2}
-    @media(max-width:720px){.core{width:300px!important;height:300px!important}.mira-core-canvas{width:300px;height:300px}}
+    @media(max-width:720px){.core{width:300px!important;height:300px!important}.mira-core-canvas{width:300px!important;height:300px!important}}
   `;
   document.head.appendChild(particleStyle);
 
@@ -34,7 +35,7 @@
     canvas.style.width = innerWidth + 'px';
     canvas.style.height = innerHeight + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const count = Math.min(145, Math.max(70, Math.floor(innerWidth * innerHeight / 14500));
+    const count = Math.min(145, Math.max(70, Math.floor(innerWidth * innerHeight / 14500)));
     if (particles.length !== count) {
       particles = Array.from({length: count}, () => ({
         x: Math.random() * innerWidth, y: Math.random() * innerHeight,
@@ -58,11 +59,11 @@
       coreCanvas.height = 430 * dpr;
       coreCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const count = 420;
-      coreParticles = Array.from({length: count}, (_, i) => {
+      coreParticles = Array.from({length: count}, () => {
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(2 * Math.random() - 1);
         const radius = Math.pow(Math.random(), .62) * 185;
-        return {theta, phi, radius,x:Math.sin(phi)*Math.cos(theta)*radius,y:Math.cos(phi)*radius*.92,z:Math.sin(phi)*Math.sin(theta)*radius,ox:0,oy:0,oz:0,vx:0,vy:0,vz:0,phase:Math.random()*Math.PI*2,hue:Math.random()<.28?'blue':(Math.random()<.25?'hot':'gold'),size:.65+Math.random()*1.9,alpha:.38+Math.random()*.55,trail:Math.random()<.16};
+        return {theta,phi,radius,x:Math.sin(phi)*Math.cos(theta)*radius,y:Math.cos(phi)*radius*.92,z:Math.sin(phi)*Math.sin(theta)*radius,ox:0,oy:0,oz:0,vx:0,vy:0,vz:0,phase:Math.random()*Math.PI*2,hue:Math.random()<.28?'blue':(Math.random()<.25?'hot':'gold'),size:.65+Math.random()*1.9,alpha:.38+Math.random()*.55,trail:Math.random()<.16};
       });
     }
     return core;
@@ -70,12 +71,12 @@
 
   function drawCore(t) {
     const core=ensureCore(); if(!core||!coreCanvas||!coreCtx)return;
-    const rect=coreCanvas.getBoundingClientRect(),w=rect.width,h=rect.height,dpr=Math.min(devicePixelRatio||1,2);
+    const rect=coreCanvas.getBoundingClientRect(); const w=rect.width,h=rect.height; const dpr=Math.min(devicePixelRatio||1,2);
     if(coreCanvas.width!==Math.round(w*dpr)||coreCanvas.height!==Math.round(h*dpr)){coreCanvas.width=Math.round(w*dpr);coreCanvas.height=Math.round(h*dpr);coreCtx.setTransform(dpr,0,0,dpr,0,0)}
-    coreCtx.clearRect(0,0,w,h);const cx=w/2,cy=h/2,rotY=t*.00008,rotX=Math.sin(t*.00012)*.055;
+    coreCtx.clearRect(0,0,w,h); const cx=w/2,cy=h/2; const rotY=t*.00008,rotX=Math.sin(t*.00012)*.055;
     const glow=coreCtx.createRadialGradient(cx,cy,8,cx,cy,w*.43);glow.addColorStop(0,'rgba(255,115,25,.10)');glow.addColorStop(.28,'rgba(255,55,20,.035)');glow.addColorStop(.62,'rgba(20,90,255,.025)');glow.addColorStop(1,'rgba(0,0,0,0)');coreCtx.fillStyle=glow;coreCtx.fillRect(0,0,w,h);
     const projected=[];
-    for(const p of coreParticles){const wave=Math.sin(t*.00038+p.phase)*2.1;let x=p.x+Math.cos(p.phase+t*.00015)*wave,y=p.y+Math.sin(p.phase+t*.00013)*wave,z=p.z;const dx=(rect.left+cx+x)-mouse.x,dy=(rect.top+cy+y)-mouse.y,d=Math.hypot(dx,dy)||1;if(mouse.active&&d<180){const force=Math.pow(1-d/180,1.55)*9.5;p.vx+=(dx/d)*force*.18;p.vy+=(dy/d)*force*.18;p.vz+=force*.12}p.vx*=.90;p.vy*=.90;p.vz*=.90;p.x+=p.vx;p.y+=p.vy;p.z+=p.vz;p.x+=(Math.sin(p.phase+t*.00018)*185-p.x)*.00055;p.y+=(Math.cos(p.phase+t*.00016)*185-p.y)*.00032;p.z+=(Math.sin(p.phase*1.7+t*.00014)*185-p.z)*.00038;const xx=x*Math.cos(rotY)-z*Math.sin(rotY),zz=x*Math.sin(rotY)+z*Math.cos(rotY),yy=y*Math.cos(rotX)-zz*Math.sin(rotX),z2=y*Math.sin(rotX)+zz*Math.cos(rotX),scale=390/(390-z2);projected.push({x:cx+xx*scale,y:cy+yy*scale,z:z2,s:p.size*scale,a:p.alpha})}
+    for(const p of coreParticles){const wave=Math.sin(t*.00038+p.phase)*2.1;let x=p.x+Math.cos(p.phase+t*.00015)*wave;let y=p.y+Math.sin(p.phase+t*.00013)*wave;let z=p.z;const dx=(rect.left+cx+x)-mouse.x,dy=(rect.top+cy+y)-mouse.y,d=Math.hypot(dx,dy)||1;if(mouse.active&&d<180){const force=Math.pow(1-d/180,1.55)*9.5;p.vx+=(dx/d)*force*.18;p.vy+=(dy/d)*force*.18;p.vz+=force*.12}p.vx*=.90;p.vy*=.90;p.vz*=.90;p.x+=p.vx;p.y+=p.vy;p.z+=p.vz;p.x+=(Math.sin(p.phase+t*.00018)*185-p.x)*.00055;p.y+=(Math.cos(p.phase+t*.00016)*185-p.y)*.00032;p.z+=(Math.sin(p.phase*1.7+t*.00014)*185-p.z)*.00038;const xx=x*Math.cos(rotY)-z*Math.sin(rotY),zz=x*Math.sin(rotY)+z*Math.cos(rotY),yy=y*Math.cos(rotX)-zz*Math.sin(rotX),z2=y*Math.sin(rotX)+zz*Math.cos(rotX),scale=390/(390-z2);projected.push({x:cx+xx*scale,y:cy+yy*scale,z:z2,s:p.size*scale,a:p.alpha})}
     projected.sort((a,b)=>a.z-b.z);
     for(let i=0;i<projected.length;i++){const p=projected[i];if(p.x<-30||p.x>w+30||p.y<-30||p.y>h+30)continue;const near=Math.max(0,(p.z+185)/370),alpha=p.a*(.42+near*.62);coreCtx.beginPath();coreCtx.arc(p.x,p.y,Math.max(.55,p.s),0,Math.PI*2);if(i%17===0){coreCtx.fillStyle=`rgba(35,145,255,${alpha*.88})`;coreCtx.shadowBlur=10;coreCtx.shadowColor=`rgba(25,120,255,${alpha})`}else if(i%11===0){coreCtx.fillStyle=`rgba(255,80,25,${alpha*.9})`;coreCtx.shadowBlur=11;coreCtx.shadowColor=`rgba(255,65,20,${alpha})`}else{coreCtx.fillStyle=`rgba(245,200,75,${alpha})`;coreCtx.shadowBlur=7;coreCtx.shadowColor=`rgba(245,200,75,${alpha*.75})`}coreCtx.fill();coreCtx.shadowBlur=0}
     coreCtx.globalCompositeOperation='lighter';for(let k=0;k<7;k++){const rr=118+k*17,phase=t*.00018*(k%2?-1:1)+k*1.7;coreCtx.beginPath();for(let j=0;j<=90;j++){const a=phase+j/90*Math.PI*2,wobble=Math.sin(a*3+k)*5,x=cx+Math.cos(a)*(rr+wobble),y=cy+Math.sin(a)*(rr*.55+wobble*.35);if(j===0)coreCtx.moveTo(x,y);else coreCtx.lineTo(x,y)}coreCtx.strokeStyle=k%3===0?'rgba(35,130,255,.16)':'rgba(255,75,25,.11)';coreCtx.lineWidth=1;coreCtx.stroke()}coreCtx.globalCompositeOperation='source-over';
