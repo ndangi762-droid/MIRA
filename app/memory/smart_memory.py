@@ -2,23 +2,23 @@ import re
 
 
 class SmartMemory:
-    """Conservative memory gate: save durable facts, preferences and plans, not casual chat."""
+    """Conservative memory gate for durable facts, preferences and plans."""
 
     EXPLICIT_TRIGGERS = (
         "yaad rakho", "yaad rakhna", "remember this", "remember that",
         "save this", "memory me save", "memory mein save",
     )
 
-    # These are intentionally narrower than the old rules. A word like "app" or
-    # "main" by itself is not enough to create long-term memory.
+    # Only save statements that look durable. Casual mentions and questions stay out.
     PATTERNS = {
         "profile": (
-            r"\bmera naam\s+(?:hai|he)?\s*.+",
-            r"\bmy name\s+is\s+.+",
-            r"\bmeri age\s+(?:hai|he)?\s*\d+",
-            r"\bmy age\s+is\s+\d+",
+            r"\bmera naam\s+(?:hai|he)?\s*[a-z][a-z .'-]{1,60}$",
+            r"\bmy name\s+is\s+[a-z][a-z .'-]{1,60}$",
+            r"\bmeri age\s+(?:hai|he)?\s*\d{1,3}\b",
+            r"\bmy age\s+is\s+\d{1,3}\b",
             r"\bmera birthday\b.*",
-            r"\bi am\s+.+",
+            r"\bmera preferred name\b.*",
+            r"\bmy preferred name\b.*",
         ),
         "preference": (
             r"\bmujhe\s+.+\s+(?:pasand|acha|accha)\b.*",
@@ -39,12 +39,11 @@ class SmartMemory:
     }
 
     def classify(self, message: str) -> str | None:
-        text = message.strip().lower()
+        text = re.sub(r"\s+", " ", message.strip().lower())
         if not text:
             return None
         if any(trigger in text for trigger in self.EXPLICIT_TRIGGERS):
             return "explicit"
-        # Questions and short conversational lines should not become memories.
         if text.endswith("?") or len(text) < 12:
             return None
         for category, patterns in self.PATTERNS.items():
@@ -57,11 +56,19 @@ class SmartMemory:
 
     def make_key(self, message: str, category: str) -> str:
         text = re.sub(r"\s+", " ", message.lower()).strip()
-        # Stable-ish keys keep repeated statements from creating lots of memories.
+
+        # Profile facts get stable keys, so an update replaces the old value
+        # instead of leaving stale memories beside the new one.
         if category == "profile":
-            for marker in ("mera naam", "my name", "meri age", "my age", "mera birthday"):
-                if marker in text:
-                    value = text[text.find(marker):]
-                    return f"profile_{re.sub(r'[^a-z0-9]+', '_', value)[:60].strip('_')}"
+            if re.search(r"\b(?:mera naam|my name)\b", text):
+                return "profile_name"
+            if re.search(r"\b(?:meri age|my age)\b", text):
+                return "profile_age"
+            if "birthday" in text:
+                return "profile_birthday"
+            if "preferred name" in text:
+                return "profile_preferred_name"
+
+        # Keep durable preferences/projects/plans deduplicated by normalized text.
         clean = re.sub(r"[^a-zA-Z0-9]+", "_", text).strip("_")[:70]
         return f"smart_{category}_{clean or 'memory'}"
