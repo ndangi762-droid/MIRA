@@ -29,11 +29,16 @@ class GeminiClient:
         contents.append({"role": "user", "parts": [{"text": message}]})
         return contents
 
-    def _payload(self, system: str, history: list[dict], message: str) -> dict:
-        return {
+    def _payload(self, system: str, history: list[dict], message: str, web_search: bool = False) -> dict:
+        payload = {
             "systemInstruction": {"parts": [{"text": system}]},
             "contents": self._contents(history, message),
         }
+        if web_search:
+            # Gemini's Google Search grounding lets MIRA answer current questions
+            # from live web results while keeping the model/API key on the server.
+            payload["tools"] = [{"google_search": {}}]
+        return payload
 
     def _headers(self) -> dict:
         return {
@@ -52,34 +57,37 @@ class GeminiClient:
                 detail = detail[:800]
             raise RuntimeError(f"Gemini HTTP {response.status_code}: {detail}")
 
+    @staticmethod
+    def _extract_text(data: dict) -> str:
+        parts = []
+        for candidate in data.get("candidates", []):
+            for part in candidate.get("content", {}).get("parts", []):
+                text = part.get("text", "")
+                if text:
+                    parts.append(text)
+        text = "".join(parts).strip()
+        if not text:
+            raise RuntimeError("Gemini response did not contain text")
+        return text
+
     async def generate(self, system: str, history: list[dict], message: str, web_search: bool = False) -> str:
         if not self.available:
             raise RuntimeError("GEMINI_API_KEY is not configured")
-        if web_search:
-            raise RuntimeError("web search is not enabled for the free Gemini provider")
 
-        # Render may expose proxy environment variables. Gemini is a direct
-        # HTTPS API, so bypassing inherited proxy settings avoids false
-        # httpx.ConnectError failures on cloud instances.
         async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
             response = await client.post(
                 self._url("generateContent"),
                 headers=self._headers(),
-                json=self._payload(system, history, message),
+                json=self._payload(system, history, message, web_search=web_search),
             )
             self._raise_with_context(response)
             data = response.json()
 
-        try:
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        except (KeyError, IndexError, TypeError):
-            raise RuntimeError("Gemini response did not contain text")
+        return self._extract_text(data)
 
     async def stream(self, system: str, history: list[dict], message: str, web_search: bool = False):
         if not self.available:
             raise RuntimeError("GEMINI_API_KEY is not configured")
-        if web_search:
-            raise RuntimeError("web search is not enabled for the free Gemini provider")
 
         url = self._url("streamGenerateContent") + "?alt=sse"
         async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
@@ -87,7 +95,7 @@ class GeminiClient:
                 "POST",
                 url,
                 headers=self._headers(),
-                json=self._payload(system, history, message),
+                json=self._payload(system, history, message, web_search=web_search),
             ) as response:
                 self._raise_with_context(response)
                 async for line in response.aiter_lines():
