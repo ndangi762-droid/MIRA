@@ -1,5 +1,8 @@
 import json
 import logging
+import threading
+import uuid
+from collections import deque
 
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import Response, StreamingResponse
@@ -18,6 +21,45 @@ mira = MIRA()
 tts = EdgeTTS()
 tasks = TaskManager()
 brief = MorningBrief(mira.llm)
+
+# Small in-memory command queue for the user's local Windows PC agent.
+# Commands are deliberately allowlisted and are only created from chat requests.
+_PC_QUEUE = deque(maxlen=50)
+_PC_LOCK = threading.Lock()
+_PC_TOKEN = __import__("os").getenv("MIRA_PC_TOKEN", "mira-local")
+
+
+def _pc_command(message: str):
+    text = " ".join(message.lower().strip().split())
+    app_aliases = {
+        "notepad": "notepad",
+        "notes": "notepad",
+        "calculator": "calculator",
+        "calc": "calculator",
+        "paint": "paint",
+        "explorer": "explorer",
+        "file explorer": "explorer",
+        "cmd": "cmd",
+    }
+    for phrase in ("open", "khol", "kholo", "chalao", "start"):
+        if phrase in text:
+            for alias, target in app_aliases.items():
+                if alias in text:
+                    return {"action": "open_app", "target": target}
+    sites = {"google": "google", "gmail": "gmail", "youtube": "youtube", "github": "github"}
+    for alias, target in sites.items():
+        if any(word in text for word in (f"open {alias}", f"{alias} kholo", f"{alias} khol", f"{alias} open")):
+            return {"action": "open_website", "target": target}
+    if any(k in text for k in ("search", "google par", "google me")):
+        prefixes = ("search ", "google par ", "google me ", "search karo ")
+        query = text
+        for p in prefixes:
+            if query.startswith(p):
+                query = query[len(p):]
+                break
+        if query and len(query) > 2:
+            return {"action": "search_web", "target": query}
+    return None
 
 
 class ChatRequest(BaseModel):
@@ -59,7 +101,7 @@ class CompleteTaskRequest(BaseModel):
 
 @router.get("/api/health")
 async def health():
-    return {"status": "ok", "assistant": "MIRA", "version": "7.9.1", "memory": "ready", "documents": "qa-ready", "sessions": "ready", "streaming": "ready", "tasks": "ready", "reminders": "ready", "morning_brief": "ready", "voice": "edge-hindi-female", "mobile_transcription": "gemini-audio"}
+    return {"status": "ok", "assistant": "MIRA", "version": "7.9.2", "memory": "ready", "documents": "qa-ready", "sessions": "ready", "streaming": "ready", "tasks": "ready", "reminders": "ready", "morning_brief": "ready", "voice": "edge-hindi-female", "mobile_transcription": "gemini-audio", "pc_control": "queue-ready"}
 
 
 @router.get("/api/brief/morning")
@@ -76,6 +118,12 @@ async def chat(req: ChatRequest):
     try:
         session_id = req.session_id.strip()
         mira.memory.ensure_session(session_id)
+        command = _pc_command(req.message)
+        if command:
+            command["id"] = uuid.uuid4().hex
+            with _PC_LOCK:
+                _PC_QUEUE.append(command)
+            return {"assistant": "MIRA", "reply": f"Boss, {command['target'].title()} open karne ka command PC ko bhej diya hai.", "session_id": session_id, "pc_command": True}
         reply = await mira.chat(req.message.strip(), session_id)
         return {"assistant": "MIRA", "reply": reply, "session_id": session_id}
     except Exception as exc:
@@ -88,9 +136,18 @@ async def chat_stream(req: ChatRequest):
     session_id = req.session_id.strip()
     message = req.message.strip()
     mira.memory.ensure_session(session_id)
+    command = _pc_command(message)
 
     async def events():
         try:
+            if command:
+                command["id"] = uuid.uuid4().hex
+                with _PC_LOCK:
+                    _PC_QUEUE.append(command)
+                reply = f"Boss, {command['target'].title()} open karne ka command PC ko bhej diya hai."
+                yield json.dumps({"delta": reply}, ensure_ascii=False) + "\n"
+                yield json.dumps({"done": True, "session_id": session_id, "pc_command": True}, ensure_ascii=False) + "\n"
+                return
             async for delta in mira.stream(message, session_id):
                 yield json.dumps({"delta": delta}, ensure_ascii=False) + "\n"
             yield json.dumps({"done": True, "session_id": session_id}, ensure_ascii=False) + "\n"
@@ -99,6 +156,22 @@ async def chat_stream(req: ChatRequest):
             yield json.dumps({"error": f"MIRA backend error: {type(exc).__name__}: {str(exc)[:300]}"}, ensure_ascii=False) + "\n"
 
     return StreamingResponse(events(), media_type="application/x-ndjson", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.get("/api/pc/poll")
+async def pc_poll(token: str):
+    if token != _PC_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized PC agent")
+    with _PC_LOCK:
+        command = _PC_QUEUE.popleft() if _PC_QUEUE else None
+    return {"ok": True, "command": command}
+
+
+@router.post("/api/pc/ack")
+async def pc_ack(token: str, command_id: str, ok: bool = True, message: str = ""):
+    if token != _PC_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized PC agent")
+    return {"ok": True, "command_id": command_id, "executed": ok, "message": message[:500]}
 
 
 @router.post("/api/voice/transcribe")
