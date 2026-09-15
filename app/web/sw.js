@@ -1,17 +1,30 @@
-const CACHE='mira-shell-v3';
+const CACHE='mira-shell-v4';
 const SHELL=['/','/manifest.json','/voice-mobile.js'];
 const PC='http://127.0.0.1:8765/command';
 self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
-function pcCommand(message){const m=message.toLowerCase();let target=null;if(/youtube|you tube/.test(m))target='youtube';else if(/google/.test(m))target='google';else if(/gmail/.test(m))target='gmail';else if(/notepad|notes/.test(m))target='notepad';else if(/calculator|calc|calculate/.test(m))target='calculator';if(!target)return null;const app=ALLOWED_APP(target);return fetch(PC,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({token:'mira-local',action:app?'open_app':'open_website',target})}).then(r=>r.json()).then(x=>x.message||'Command completed.');}
-function ALLOWED_APP(t){return t==='notepad'||t==='calculator'}
+function pcCommand(message){
+  const m=message.toLowerCase().trim();
+  let target=null;
+  let action='open_website';
+  if(/\b(chrome|google chrome)\b.*(khol|open|chala|start)|^(chrome|google chrome)$/.test(m)){target='chrome';action='open_app'}
+  else if(/youtube|you tube/.test(m))target='youtube';
+  else if(/gmail/.test(m))target='gmail';
+  else if(/google.*(khol|open|search)|google par ja/.test(m))target='google';
+  else if(/notepad|notes.*(khol|open)|notepad.*(khol|open)/.test(m)){target='notepad';action='open_app'}
+  else if(/calculator|calc|calculate|calculator.*(khol|open)/.test(m)){target='calculator';action='open_app'}
+  else if(/paint.*(khol|open)|^paint$/.test(m)){target='paint';action='open_app'}
+  else if(/file explorer|explorer.*(khol|open)|files.*(khol|open)/.test(m)){target='explorer';action='open_app'}
+  else if(/google.*search|search.*google/.test(m)){return fetch(PC,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({token:'mira-local',action:'search_web',target:m.replace(/.*(?:google.*search|search.*google)/,'').trim()})}).then(r=>r.json()).then(x=>x.message||'Search completed.')}
+  if(!target)return null;
+  return fetch(PC,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify({token:'mira-local',action,target})}).then(r=>r.json()).then(x=>x.message||'Command completed.');
+}
 function injectVoice(response){
   const type=response.headers.get('content-type')||'';
   if(!type.includes('text/html'))return response;
   return response.text().then(html=>{
     if(html.includes('/voice-mobile.js'))return new Response(html,{status:response.status,statusText:response.statusText,headers:response.headers});
-    const marker='</body>';
-    const pos=html.toLowerCase().lastIndexOf(marker);
+    const marker='</body>';const pos=html.toLowerCase().lastIndexOf(marker);
     const injected=pos>=0?html.slice(0,pos)+'<script src="/voice-mobile.js" defer></script>'+html.slice(pos):html+'<script src="/voice-mobile.js" defer></script>';
     const headers=new Headers(response.headers);headers.delete('content-length');
     return new Response(injected,{status:response.status,statusText:response.statusText,headers});
