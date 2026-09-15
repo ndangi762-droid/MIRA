@@ -1,23 +1,21 @@
 """MIRA Windows PC bridge.
 
-Run this ON THE USER'S WINDOWS PC. It listens only on localhost:8765 and
-exposes a small allowlisted set of computer actions to the MIRA web UI.
-No arbitrary shell commands are accepted.
+Run this ON THE USER'S WINDOWS PC. It polls the live MIRA server for
+allowlisted computer actions, so the browser never needs direct localhost
+access. No arbitrary shell commands are accepted.
 """
 from __future__ import annotations
 
-import json
 import os
 import subprocess
-import threading
+import time
 import webbrowser
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import requests
 from urllib.parse import quote_plus
 
-HOST = "127.0.0.1"
-PORT = 8765
+MIRA_SERVER = os.getenv("MIRA_SERVER", "https://mira-premium.onrender.com").rstrip("/")
 TOKEN = os.getenv("MIRA_PC_TOKEN", "mira-local")
-ALLOWED_ORIGIN = "https://mira-premium.onrender.com"
+POLL_SECONDS = max(1, float(os.getenv("MIRA_PC_POLL_SECONDS", "2")))
 
 APP_COMMANDS = {
     "notepad": ["notepad.exe"],
@@ -29,82 +27,80 @@ APP_COMMANDS = {
 
 
 def open_app(name: str):
-    name = name.lower().strip()
-    command = APP_COMMANDS.get(name)
+    command = APP_COMMANDS.get(name.lower().strip())
     if not command:
-        return {"ok": False, "message": f"App '{name}' is not allowlisted."}
+        return False, f"App '{name}' is not allowlisted."
     subprocess.Popen(command, shell=False)
-    return {"ok": True, "message": f"{name.title()} opened."}
+    return True, f"{name.title()} opened."
 
 
 def open_website(target: str):
-    target = target.strip()
     sites = {
         "google": "https://www.google.com/",
         "gmail": "https://mail.google.com/",
         "youtube": "https://www.youtube.com/",
         "github": "https://github.com/",
     }
-    url = sites.get(target.lower())
+    url = sites.get(target.lower().strip())
     if not url:
-        return {"ok": False, "message": "Website is not allowlisted."}
+        return False, "Website is not allowlisted."
     webbrowser.open(url, new=2)
-    return {"ok": True, "message": f"{target.title()} opened."}
+    return True, f"{target.title()} opened."
 
 
 def search_web(query: str):
     query = query.strip()
     if not query:
-        return {"ok": False, "message": "Search query is empty."}
+        return False, "Search query is empty."
     webbrowser.open("https://www.google.com/search?q=" + quote_plus(query), new=2)
-    return {"ok": True, "message": f"Google search opened for: {query}"}
+    return True, f"Google search opened for: {query}"
 
 
-def execute(payload: dict):
-    if payload.get("token") != TOKEN:
-        return {"ok": False, "message": "Unauthorized PC command."}
-    action = str(payload.get("action", "")).lower().strip()
-    target = str(payload.get("target", "")).strip()
+def execute(command: dict):
+    action = str(command.get("action", "")).lower().strip()
+    target = str(command.get("target", "")).strip()
     if action == "open_app":
         return open_app(target)
     if action == "open_website":
         return open_website(target)
     if action == "search_web":
         return search_web(target)
-    return {"ok": False, "message": "PC action is not allowlisted."}
+    return False, "PC action is not allowlisted."
 
 
-class Handler(BaseHTTPRequestHandler):
-    def _headers(self, status=200):
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN)
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
-
-    def do_OPTIONS(self):
-        self._headers(204)
-
-    def do_POST(self):
-        if self.path != "/command":
-            self._headers(404)
-            self.wfile.write(b'{"ok":false,"message":"Not found."}')
-            return
+def main():
+    print(f"MIRA PC agent connected to {MIRA_SERVER}")
+    print("Waiting for MIRA commands... (Ctrl+C to stop)")
+    while True:
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            result = execute(payload)
+            response = requests.get(
+                f"{MIRA_SERVER}/api/pc/poll",
+                params={"token": TOKEN},
+                timeout=15,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            command = payload.get("command")
+            if command:
+                ok, message = execute(command)
+                print(f"[MIRA-PC] {message}")
+                try:
+                    requests.post(
+                        f"{MIRA_SERVER}/api/pc/ack",
+                        params={"token": TOKEN, "command_id": command.get("id", ""), "ok": str(ok).lower(), "message": message},
+                        timeout=10,
+                    )
+                except requests.RequestException:
+                    pass
+        except requests.RequestException as exc:
+            print(f"[MIRA-PC] Server connection error: {type(exc).__name__}")
+        except KeyboardInterrupt:
+            print("\nMIRA PC agent stopped.")
+            return
         except Exception as exc:
-            result = {"ok": False, "message": f"PC bridge error: {type(exc).__name__}"}
-        self._headers(200 if result.get("ok") else 400)
-        self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
-
-    def log_message(self, fmt, *args):
-        print("[MIRA-PC]", fmt % args)
+            print(f"[MIRA-PC] Error: {type(exc).__name__}")
+        time.sleep(POLL_SECONDS)
 
 
 if __name__ == "__main__":
-    print(f"MIRA PC bridge running on http://{HOST}:{PORT}")
-    print("Allowed: notepad, calculator, paint, explorer, cmd, Google, Gmail, YouTube, GitHub")
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    main()
