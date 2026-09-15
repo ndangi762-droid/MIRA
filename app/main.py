@@ -9,7 +9,7 @@ from app.api.pc_control import router as pc_router
 from app.config import MIRA_NAME
 
 
-app = FastAPI(title=MIRA_NAME, version="7.4.0")
+app = FastAPI(title=MIRA_NAME, version="7.4.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,7 +24,9 @@ app.include_router(pc_router)
 @app.get("/", response_class=HTMLResponse)
 def home():
     html = (Path(__file__).parent / "web" / "index.html").read_text(encoding="utf-8")
-    return html.replace("</body>", '<script src="/voice.js"></script><script src="/document.js"></script><script src="/pc-control.js"></script></body>')
+    # Version query prevents an old browser/service-worker cached PC-control script
+    # from silently bypassing the live PC command path.
+    return html.replace("</body>", '<script src="/voice.js?v=pc3"></script><script src="/document.js?v=pc3"></script><script src="/pc-control.js?v=pc3"></script></body>')
 
 
 @app.get("/voice.js")
@@ -48,4 +50,5 @@ def pc_control_script():
     return Response(
         content=(Path(__file__).parent / "web" / "pc-control.js").read_text(encoding="utf-8"),
         media_type="application/javascript",
+        headers={"Cache-Control": "no-store"},
     )
