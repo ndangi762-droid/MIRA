@@ -71,4 +71,15 @@
     recognition.onend=()=>{const text=finalText.trim();listening=false;setListeningUI(false);recognition=null;if(text){setText(text);sendText()}};
     try{recognition.start()}catch(e){recognition=null;listening=false;setListeningUI(false);await startRecorder()}
   };
+
+  // Hide the internal AI engine/provider badge from the user-facing HUD.
+  const hideEngineBadge=()=>{
+    document.querySelectorAll('.metric,.side-info').forEach(el=>{
+      const text=(el.textContent||'').replace(/\s+/g,' ').trim().toUpperCase();
+      if(text.includes('AI ENGINE')&&text.includes('GEMINI'))el.style.display='none';
+    });
+  };
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',hideEngineBadge,{once:true});
+  else hideEngineBadge();
+  new MutationObserver(hideEngineBadge).observe(document.documentElement,{subtree:true,childList:true});
 })();
