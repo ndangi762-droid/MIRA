@@ -60,10 +60,14 @@ def parse_message(message: str) -> dict[str, Any] | None:
     for phrase, keys in hotkeys.items():
         if phrase in text:
             return {"action": "hotkey", "keys": keys}
+    if text.startswith(("click ", "click karo ")):
+        parts = text.replace("click karo ", "click ", 1).split()
+        if len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
+            return {"action": "click", "x": int(parts[1]), "y": int(parts[2])}
     return None
 
 
-@router.post("/api/pc/command")
+@router.post("/api/pc2/command")
 async def queue_pc_command(req: PCCommandRequest):
     command = parse_message(req.message)
     if not command:
@@ -76,7 +80,7 @@ async def queue_pc_command(req: PCCommandRequest):
     return {"assistant": "MIRA", "status": "queued", "command_id": command_id, "action": command["action"]}
 
 
-@router.get("/api/pc/poll")
+@router.get("/api/pc2/poll")
 async def poll_pc_command(token: str, device: str = "windows"):
     if token != _TOKEN:
         raise HTTPException(status_code=401, detail="Invalid PC agent token")
@@ -88,7 +92,7 @@ async def poll_pc_command(token: str, device: str = "windows"):
     return {"command": None}
 
 
-@router.post("/api/pc/ack")
+@router.post("/api/pc2/ack")
 async def ack_pc_command(token: str, command_id: str, ok: bool, message: str = ""):
     if token != _TOKEN:
         raise HTTPException(status_code=401, detail="Invalid PC agent token")
@@ -97,7 +101,7 @@ async def ack_pc_command(token: str, command_id: str, ok: bool, message: str = "
     return {"status": "ok"}
 
 
-@router.get("/api/pc/result/{command_id}")
+@router.get("/api/pc2/result/{command_id}")
 async def pc_result(command_id: str):
     with _LOCK:
         result = _LAST_RESULT.get(command_id)
@@ -106,7 +110,7 @@ async def pc_result(command_id: str):
     return {"command_id": command_id, **result}
 
 
-@router.get("/api/pc/status")
+@router.get("/api/pc2/status")
 async def pc_status():
     with _LOCK:
-        return {"assistant": "MIRA", "queued": len(_QUEUE), "agent": "online" if _QUEUE else "ready"}
+        return {"assistant": "MIRA", "queued": len(_QUEUE), "agent": "polling" if _QUEUE else "ready"}
