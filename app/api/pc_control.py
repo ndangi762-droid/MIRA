@@ -11,77 +11,55 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 router = APIRouter()
-
-_QUEUE: deque[dict[str, Any]] = deque(maxlen=50)
+_QUEUE: deque[dict[str, Any]] = deque(maxlen=100)
 _LAST_RESULT: dict[str, dict[str, Any]] = {}
 _LOCK = threading.Lock()
 _TOKEN = os.getenv("MIRA_PC_TOKEN", "mira-local")
 
 
 class PCCommandRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=2000)
+    message: str = Field(min_length=1, max_length=4000)
     device: str = Field(default="windows", min_length=1, max_length=50)
 
 
 def parse_message(message: str) -> dict[str, Any] | None:
-    text = " ".join(message.lower().strip().split())
+    original = message.strip()
+    text = " ".join(original.lower().split())
     open_words = ("open", "khol", "kholo", "chalao", "start", "launch")
-
     apps = {
-        "chrome": "chrome",
-        "google chrome": "chrome",
-        "notepad": "notepad",
-        "notes": "notepad",
-        "calculator": "calculator",
-        "calc": "calculator",
-        "paint": "paint",
-        "explorer": "explorer",
-        "file explorer": "explorer",
+        "google chrome": "chrome", "chrome": "chrome", "notepad": "notepad",
+        "notes": "notepad", "calculator": "calculator", "calc": "calculator",
+        "paint": "paint", "file explorer": "explorer", "explorer": "explorer",
         "task manager": "task_manager",
     }
     if any(w in text for w in open_words):
         for alias, target in sorted(apps.items(), key=lambda x: -len(x[0])):
             if alias in text:
                 return {"action": "open_app", "target": target}
-
-    sites = {
-        "youtube": "https://www.youtube.com/",
-        "gmail": "https://mail.google.com/",
-        "google": "https://www.google.com/",
-        "github": "https://github.com/",
-    }
+    sites = {"youtube": "https://www.youtube.com/", "gmail": "https://mail.google.com/", "google": "https://www.google.com/", "github": "https://github.com/"}
     if any(w in text for w in open_words):
         for alias, url in sites.items():
             if alias in text:
                 return {"action": "open_url", "target": url}
-
-    prefixes = ("search ", "google par ", "google me ", "search karo ", "search for ")
+    prefixes = ("search karo ", "search for ", "search ", "google par ", "google me ")
     for prefix in prefixes:
         if text.startswith(prefix):
-            query = text[len(prefix):].strip()
+            query = original[len(prefix):].strip()
             if query:
-                return {"action": "search_web", "target": query}
-
-    if text.startswith(("type ", "likho ", "type karo ")):
-        for prefix in ("type karo ", "type ", "likho "):
-            if text.startswith(prefix):
-                value = message.strip()[len(prefix):].strip()
-                if value:
-                    return {"action": "type_text", "text": value}
-
+                return {"action": "search_web", "target": query[:1000]}
+    for prefix in ("type karo ", "type ", "likho "):
+        if text.startswith(prefix):
+            value = original[len(prefix):].strip()
+            if value:
+                return {"action": "type_text", "text": value[:5000]}
     hotkeys = {
-        "copy": ["ctrl", "c"],
-        "paste": ["ctrl", "v"],
-        "select all": ["ctrl", "a"],
-        "save": ["ctrl", "s"],
-        "undo": ["ctrl", "z"],
-        "redo": ["ctrl", "y"],
-        "close window": ["alt", "f4"],
+        "copy": ["ctrl", "c"], "paste": ["ctrl", "v"], "select all": ["ctrl", "a"],
+        "save": ["ctrl", "s"], "undo": ["ctrl", "z"], "redo": ["ctrl", "y"],
+        "close window": ["alt", "f4"], "switch window": ["alt", "tab"],
     }
     for phrase, keys in hotkeys.items():
         if phrase in text:
             return {"action": "hotkey", "keys": keys}
-
     return None
 
 
@@ -89,7 +67,7 @@ def parse_message(message: str) -> dict[str, Any] | None:
 async def queue_pc_command(req: PCCommandRequest):
     command = parse_message(req.message)
     if not command:
-        raise HTTPException(status_code=400, detail="I could not map that request to a safe PC action yet.")
+        raise HTTPException(status_code=400, detail="PC action is not mapped to a safe command yet.")
     command_id = uuid.uuid4().hex
     item = {"id": command_id, "device": req.device, "created_at": time.time(), **command}
     with _LOCK:
@@ -131,4 +109,4 @@ async def pc_result(command_id: str):
 @router.get("/api/pc/status")
 async def pc_status():
     with _LOCK:
-        return {"assistant": "MIRA", "queued": len(_QUEUE), "agent": "polling" if _QUEUE else "ready"}
+        return {"assistant": "MIRA", "queued": len(_QUEUE), "agent": "online" if _QUEUE else "ready"}
