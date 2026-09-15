@@ -9,6 +9,8 @@ from app.core.task_manager import TaskManager
 from app.core.morning_brief import MorningBrief
 from app.files.document_store import save_upload, extract_text
 from app.voice.edge_tts import EdgeTTS
+from app.config import GEMINI_API_KEY, GEMINI_MODEL
+import httpx
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -57,7 +59,7 @@ class CompleteTaskRequest(BaseModel):
 
 @router.get("/api/health")
 async def health():
-    return {"status": "ok", "assistant": "MIRA", "version": "7.9.0", "memory": "ready", "documents": "qa-ready", "sessions": "ready", "streaming": "ready", "tasks": "ready", "reminders": "ready", "morning_brief": "ready", "voice": "edge-hindi-female"}
+    return {"status": "ok", "assistant": "MIRA", "version": "7.9.1", "memory": "ready", "documents": "qa-ready", "sessions": "ready", "streaming": "ready", "tasks": "ready", "reminders": "ready", "morning_brief": "ready", "voice": "edge-hindi-female", "mobile_transcription": "gemini-audio"}
 
 
 @router.get("/api/brief/morning")
@@ -97,6 +99,49 @@ async def chat_stream(req: ChatRequest):
             yield json.dumps({"error": f"MIRA backend error: {type(exc).__name__}: {str(exc)[:300]}"}, ensure_ascii=False) + "\n"
 
     return StreamingResponse(events(), media_type="application/x-ndjson", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/api/voice/transcribe")
+async def voice_transcribe(file: UploadFile = File(...)):
+    """Transcribe a short microphone recording with the configured Gemini model."""
+    if not GEMINI_API_KEY.strip():
+        raise HTTPException(status_code=503, detail="GEMINI_API_KEY is not configured")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="empty audio recording")
+    if len(data) > 12 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="audio recording is too large")
+
+    mime = (file.content_type or "audio/mp4").split(";")[0].strip().lower()
+    allowed = {"audio/mp4", "audio/webm", "audio/wav", "audio/wave", "audio/x-wav", "audio/mpeg", "audio/ogg", "audio/aac", "audio/m4a"}
+    if mime not in allowed:
+        mime = "audio/mp4"
+
+    import base64
+    payload = {
+        "contents": [{"role": "user", "parts": [
+            {"text": "Transcribe this audio exactly. Return only the spoken words, with no labels, explanation, punctuation commentary, or extra text. The speaker may use Hindi, Hinglish, or English. Preserve the speaker's wording."},
+            {"inline_data": {"mime_type": mime, "data": base64.b64encode(data).decode("ascii")}},
+        ]}]
+    }
+    model = GEMINI_MODEL.strip() or "gemini-3.1-flash-lite"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    try:
+        async with httpx.AsyncClient(timeout=90, trust_env=False) as client:
+            response = await client.post(url, headers={"x-goog-api-key": GEMINI_API_KEY.strip(), "Content-Type": "application/json"}, json=payload)
+            if response.is_error:
+                detail = response.text.strip().replace("\n", " ")[:800]
+                raise HTTPException(status_code=502, detail=f"Gemini transcription error: HTTP {response.status_code}: {detail}")
+            result = response.json()
+        text = "".join(part.get("text", "") for candidate in result.get("candidates", []) for part in candidate.get("content", {}).get("parts", []) if part.get("text")).strip()
+        if not text:
+            raise HTTPException(status_code=502, detail="Gemini returned no transcription")
+        return {"assistant": "MIRA", "text": text, "mime_type": mime}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("MIRA voice transcription failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail=f"Voice transcription error: {type(exc).__name__}") from exc
 
 
 @router.get("/api/tasks")
