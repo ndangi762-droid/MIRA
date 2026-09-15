@@ -76,6 +76,23 @@ class MIRA:
                 return f"Boss, {count} matching memory {'delete ho gayi' if count == 1 else 'delete ho gayi hain'}."
         return None
 
+    def _needs_web_search(self, message: str) -> bool:
+        """Use web grounding automatically for questions where freshness matters."""
+        text = message.lower().strip()
+        explicit = ("search web ", "web search ", "internet par search ", "latest search ")
+        if text.startswith(explicit):
+            return True
+        freshness = (
+            "latest", "today", "aaj", "abhi", "current", "recent", "recently", "news", "update", "updates",
+            "price", "stock price", "share price", "weather", "score", "result", "results", "release", "released",
+            "launch", "launched", "version", "who is the current", "current ceo", "current president"
+        )
+        domains = ("ai", "artificial intelligence", "technology", "tech", "openai", "google", "gemini", "anthropic", "meta", "microsoft", "apple", "nvidia", "github")
+        return any(term in text for term in freshness) and any(term in text for term in domains + ("india", "world"))
+
+    def _clean_web_query(self, message: str) -> str:
+        return re.sub(r"^(search web|web search|internet par search|latest search)\s+", "", message, flags=re.I).strip()
+
     def _action_reply(self, tool_name: str, result: dict) -> str:
         if tool_name == "calculator":
             return f"Boss, result: {result['result']}"
@@ -155,9 +172,9 @@ class MIRA:
                 yield response
             else:
                 system, history = self._build_prompt(message, history)
-                web_search = message.lower().startswith(("search web ", "web search ", "internet par search ", "latest search "))
+                web_search = self._needs_web_search(message)
                 if web_search:
-                    clean = re.sub(r"^(search web|web search|internet par search|latest search)\s+", "", message, flags=re.I)
+                    clean = self._clean_web_query(message)
                     parts = []
                     async for delta in self.llm.stream(system, history, clean, web_search=True):
                         parts.append(delta)
