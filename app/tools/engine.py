@@ -34,11 +34,19 @@ class ActionEngine:
         m = re.match(r"^(?:read|open|padho|padh)\s+(?:file\s+)?[\"']?([^\"']+?)[\"']?$", text, re.I)
         if m and m.group(1).strip().lower().endswith((".txt", ".md")):
             return "read_file", {"name": m.group(1).strip()}
-        if low.startswith(("add task ", "task add ", "kaam add karo ", "kaam save karo ")):
-            title = re.sub(r"^(add task|task add|kaam add karo|kaam save karo)\s+", "", text, flags=re.I).strip()
-            return "add_task", {"title": title}
+
+        # Task/reminder commands. Dates/times are supplied as ISO strings by the UI/API,
+        # keeping parsing deterministic and avoiding hidden assumptions about locale.
+        m = re.match(r"^(?:add task|task add|kaam add karo|kaam save karo)\s+(.+)$", text, re.I)
+        if m: return "add_task", {"title": m.group(1).strip()}
+        m = re.match(r"^(?:remind me|reminder|yaad dilana|mujhe yaad dilana)\s+(.+)$", text, re.I)
+        if m: return "reminder_request", {"text": m.group(1).strip()}
         if low in {"my tasks", "tasks dikhao", "pending tasks", "pending kaam", "mera pending kaam kya hai"}:
             return "list_tasks", {}
+        if low in {"reminders dikhao", "my reminders", "pending reminders", "yaad dilane wali cheeze dikhao"}:
+            return "list_reminders", {}
+        if low in {"due tasks", "due kaam", "aaj ke tasks", "aaj ka kaam"}:
+            return "due_tasks", {}
         if low.startswith(("complete task ", "complete ", "task complete ", "kaam complete ")):
             q = re.sub(r"^(complete task|complete|task complete|kaam complete)\s+", "", text, flags=re.I).strip()
             return "complete_task", {"query": q}
@@ -49,6 +57,13 @@ class ActionEngine:
     def execute(self, name: str, **kwargs):
         if name == "add_task": return {"ok": True, "task": self.tasks.add(kwargs["title"])}
         if name == "list_tasks": return {"ok": True, "tasks": self.tasks.list("pending")}
+        if name == "list_reminders":
+            tasks = [t for t in self.tasks.list("pending") if t.get("reminder_at") or t.get("due_at")]
+            return {"ok": True, "reminders": tasks}
+        if name == "due_tasks": return {"ok": True, "tasks": self.tasks.due_or_reminders()}
+        if name == "reminder_request":
+            return {"ok": False, "needs_schedule": True, "text": kwargs["text"],
+                    "message": "Reminder ka exact date/time chahiye. Example: 2026-09-16 09:00."}
         if name == "complete_task": return {"ok": True, "count": self.tasks.complete(kwargs["query"])}
         if name == "clear_completed_tasks": return {"ok": True, "count": self.tasks.clear_completed()}
         fn = self.registry.get(name)
