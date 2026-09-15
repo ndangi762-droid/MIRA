@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 import uuid
@@ -26,6 +27,12 @@ def parse_message(message: str) -> dict[str, Any] | None:
     original = message.strip()
     text = " ".join(original.lower().split())
     open_words = ("open", "khol", "kholo", "chalao", "start", "launch")
+
+    # Combined action: open Notepad and type text after it appears.
+    m = re.match(r"^(?:notepad|notes)\s+(?:me|mein)\s+(.+?)\s+(?:likho|likh do|type karo|type)$", original, re.I)
+    if m:
+        return {"action": "open_and_type", "target": "notepad", "text": m.group(1).strip()[:5000]}
+
     apps = {
         "google chrome": "chrome", "chrome": "chrome", "notepad": "notepad",
         "notes": "notepad", "calculator": "calculator", "calc": "calculator",
@@ -36,22 +43,29 @@ def parse_message(message: str) -> dict[str, Any] | None:
         for alias, target in sorted(apps.items(), key=lambda x: -len(x[0])):
             if alias in text:
                 return {"action": "open_app", "target": target}
-    sites = {"youtube": "https://www.youtube.com/", "gmail": "https://mail.google.com/", "google": "https://www.google.com/", "github": "https://github.com/"}
+
+    sites = {
+        "youtube": "https://www.youtube.com/", "gmail": "https://mail.google.com/",
+        "google": "https://www.google.com/", "github": "https://github.com/"
+    }
     if any(w in text for w in open_words):
         for alias, url in sites.items():
             if alias in text:
                 return {"action": "open_url", "target": url}
+
     prefixes = ("search karo ", "search for ", "search ", "google par ", "google me ")
     for prefix in prefixes:
         if text.startswith(prefix):
             query = original[len(prefix):].strip()
             if query:
                 return {"action": "search_web", "target": query[:1000]}
+
     for prefix in ("type karo ", "type ", "likho "):
         if text.startswith(prefix):
             value = original[len(prefix):].strip()
             if value:
                 return {"action": "type_text", "text": value[:5000]}
+
     hotkeys = {
         "copy": ["ctrl", "c"], "paste": ["ctrl", "v"], "select all": ["ctrl", "a"],
         "save": ["ctrl", "s"], "undo": ["ctrl", "z"], "redo": ["ctrl", "y"],
@@ -60,6 +74,14 @@ def parse_message(message: str) -> dict[str, Any] | None:
     for phrase, keys in hotkeys.items():
         if phrase in text:
             return {"action": "hotkey", "keys": keys}
+
+    if any(p in text for p in ("volume kam", "volume down", "awaaz kam")):
+        return {"action": "media_key", "key": "volume_down"}
+    if any(p in text for p in ("volume badha", "volume up", "awaaz badha")):
+        return {"action": "media_key", "key": "volume_up"}
+    if any(p in text for p in ("music pause", "music play", "pause music", "play music")):
+        return {"action": "media_key", "key": "play_pause"}
+
     if text.startswith(("click ", "click karo ")):
         parts = text.replace("click karo ", "click ", 1).split()
         if len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
