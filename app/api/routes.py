@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from app.core.assistant import MIRA
+from app.core.task_manager import TaskManager
 from app.files.document_store import save_upload, extract_text
 from app.voice.edge_tts import EdgeTTS
 
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 mira = MIRA()
 tts = EdgeTTS()
+tasks = TaskManager()
 
 
 class ChatRequest(BaseModel):
@@ -40,9 +42,20 @@ class SessionRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
 
 
+class TaskRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=500)
+    priority: str = Field(default="normal", pattern="^(low|normal|high)$")
+    due_at: str | None = Field(default=None, max_length=80)
+    reminder_at: str | None = Field(default=None, max_length=80)
+
+
+class CompleteTaskRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=200)
+
+
 @router.get("/api/health")
 async def health():
-    return {"status": "ok", "assistant": "MIRA", "version": "7.7.0", "memory": "ready", "documents": "qa-ready", "sessions": "ready", "streaming": "ready", "voice": "edge-hindi-female"}
+    return {"status": "ok", "assistant": "MIRA", "version": "7.8.0", "memory": "ready", "documents": "qa-ready", "sessions": "ready", "streaming": "ready", "tasks": "ready", "reminders": "ready", "voice": "edge-hindi-female"}
 
 
 @router.post("/api/chat")
@@ -73,6 +86,38 @@ async def chat_stream(req: ChatRequest):
             yield json.dumps({"error": f"MIRA backend error: {type(exc).__name__}: {str(exc)[:300]}"}, ensure_ascii=False) + "\n"
 
     return StreamingResponse(events(), media_type="application/x-ndjson", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.get("/api/tasks")
+async def get_tasks(status: str = "pending"):
+    if status not in {"pending", "completed"}:
+        raise HTTPException(status_code=400, detail="status must be pending or completed")
+    return {"assistant": "MIRA", "tasks": tasks.list(status)}
+
+
+@router.post("/api/tasks")
+async def add_task(req: TaskRequest):
+    try:
+        return {"assistant": "MIRA", "status": "created", "task": tasks.add(req.title, req.priority, req.due_at, req.reminder_at)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/api/tasks/due")
+async def get_due_tasks():
+    return {"assistant": "MIRA", "tasks": tasks.due_or_reminders()}
+
+
+@router.post("/api/tasks/complete")
+async def complete_task(req: CompleteTaskRequest):
+    count = tasks.complete(req.query.strip())
+    return {"assistant": "MIRA", "status": "completed", "count": count}
+
+
+@router.delete("/api/tasks/completed")
+async def clear_completed_tasks():
+    count = tasks.clear_completed()
+    return {"assistant": "MIRA", "status": "cleared", "count": count}
 
 
 @router.post("/api/documents/ask")
