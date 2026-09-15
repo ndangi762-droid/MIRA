@@ -6,6 +6,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from app.core.assistant import MIRA
 from app.core.task_manager import TaskManager
+from app.core.morning_brief import MorningBrief
 from app.files.document_store import save_upload, extract_text
 from app.voice.edge_tts import EdgeTTS
 
@@ -14,6 +15,7 @@ router = APIRouter()
 mira = MIRA()
 tts = EdgeTTS()
 tasks = TaskManager()
+brief = MorningBrief(mira.llm)
 
 
 class ChatRequest(BaseModel):
@@ -55,7 +57,16 @@ class CompleteTaskRequest(BaseModel):
 
 @router.get("/api/health")
 async def health():
-    return {"status": "ok", "assistant": "MIRA", "version": "7.8.0", "memory": "ready", "documents": "qa-ready", "sessions": "ready", "streaming": "ready", "tasks": "ready", "reminders": "ready", "voice": "edge-hindi-female"}
+    return {"status": "ok", "assistant": "MIRA", "version": "7.9.0", "memory": "ready", "documents": "qa-ready", "sessions": "ready", "streaming": "ready", "tasks": "ready", "reminders": "ready", "morning_brief": "ready", "voice": "edge-hindi-female"}
+
+
+@router.get("/api/brief/morning")
+async def morning_brief():
+    try:
+        return {"assistant": "MIRA", "type": "morning_brief", "brief": await brief.generate()}
+    except Exception as exc:
+        logger.exception("MIRA morning brief failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail=f"Morning brief error: {type(exc).__name__}: {str(exc)[:300]}") from exc
 
 
 @router.post("/api/chat")
