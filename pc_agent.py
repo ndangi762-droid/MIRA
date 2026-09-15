@@ -1,8 +1,7 @@
-"""MIRA Windows PC bridge.
+"""MIRA Windows PC agent.
 
-Run this ON THE USER'S WINDOWS PC. It polls the live MIRA server for
-allowlisted computer actions, so the browser never needs direct localhost
-access. No arbitrary shell commands are accepted.
+Run this on the Windows PC that MIRA is allowed to control. It polls the live
+MIRA server and executes only explicit allowlisted desktop actions.
 """
 from __future__ import annotations
 
@@ -10,8 +9,10 @@ import os
 import subprocess
 import time
 import webbrowser
-import requests
 from urllib.parse import quote_plus
+
+import requests
+import pyautogui
 
 MIRA_SERVER = os.getenv("MIRA_SERVER", "https://mira-premium.onrender.com").rstrip("/")
 TOKEN = os.getenv("MIRA_PC_TOKEN", "mira-local")
@@ -22,7 +23,12 @@ APP_COMMANDS = {
     "calculator": ["calc.exe"],
     "paint": ["mspaint.exe"],
     "explorer": ["explorer.exe"],
-    "cmd": ["cmd.exe"],
+    "chrome": ["cmd", "/c", "start", "", "chrome"],
+    "task_manager": ["taskmgr.exe"],
+}
+
+SITES = {
+    "https://www.youtube.com/", "https://mail.google.com/", "https://www.google.com/", "https://github.com/"
 }
 
 
@@ -31,21 +37,14 @@ def open_app(name: str):
     if not command:
         return False, f"App '{name}' is not allowlisted."
     subprocess.Popen(command, shell=False)
-    return True, f"{name.title()} opened."
+    return True, f"{name.replace('_', ' ').title()} opened."
 
 
-def open_website(target: str):
-    sites = {
-        "google": "https://www.google.com/",
-        "gmail": "https://mail.google.com/",
-        "youtube": "https://www.youtube.com/",
-        "github": "https://github.com/",
-    }
-    url = sites.get(target.lower().strip())
-    if not url:
+def open_url(url: str):
+    if url not in SITES:
         return False, "Website is not allowlisted."
     webbrowser.open(url, new=2)
-    return True, f"{target.title()} opened."
+    return True, "Website opened."
 
 
 def search_web(query: str):
@@ -56,15 +55,37 @@ def search_web(query: str):
     return True, f"Google search opened for: {query}"
 
 
+def type_text(value: str):
+    pyautogui.write(str(value), interval=0.01)
+    return True, "Text typed."
+
+
+def hotkey(keys):
+    allowed = {"ctrl", "alt", "shift", "tab", "enter", "esc", "c", "v", "a", "s", "z", "y", "f4"}
+    keys = [str(k).lower() for k in keys]
+    if not keys or any(k not in allowed for k in keys):
+        return False, "Hotkey is not allowlisted."
+    pyautogui.hotkey(*keys)
+    return True, "Keyboard shortcut executed."
+
+
+def click(x, y):
+    x, y = int(x), int(y)
+    width, height = pyautogui.size()
+    if not (0 <= x < width and 0 <= y < height):
+        return False, "Click coordinates are outside the screen."
+    pyautogui.click(x, y)
+    return True, f"Clicked at {x}, {y}."
+
+
 def execute(command: dict):
     action = str(command.get("action", "")).lower().strip()
-    target = str(command.get("target", "")).strip()
-    if action == "open_app":
-        return open_app(target)
-    if action == "open_website":
-        return open_website(target)
-    if action == "search_web":
-        return search_web(target)
+    if action == "open_app": return open_app(str(command.get("target", "")))
+    if action == "open_url": return open_url(str(command.get("target", "")))
+    if action == "search_web": return search_web(str(command.get("target", "")))
+    if action == "type_text": return type_text(str(command.get("text", "")))
+    if action == "hotkey": return hotkey(command.get("keys", []))
+    if action == "click": return click(command.get("x", -1), command.get("y", -1))
     return False, "PC action is not allowlisted."
 
 
@@ -74,21 +95,18 @@ def main():
     while True:
         try:
             response = requests.get(
-                f"{MIRA_SERVER}/api/pc/poll",
-                params={"token": TOKEN},
-                timeout=15,
+                f"{MIRA_SERVER}/api/pc2/poll",
+                params={"token": TOKEN, "device": "windows"}, timeout=15
             )
             response.raise_for_status()
-            payload = response.json()
-            command = payload.get("command")
+            command = response.json().get("command")
             if command:
                 ok, message = execute(command)
                 print(f"[MIRA-PC] {message}")
                 try:
                     requests.post(
-                        f"{MIRA_SERVER}/api/pc/ack",
-                        params={"token": TOKEN, "command_id": command.get("id", ""), "ok": str(ok).lower(), "message": message},
-                        timeout=10,
+                        f"{MIRA_SERVER}/api/pc2/ack",
+                        params={"token": TOKEN, "command_id": command.get("id", ""), "ok": str(ok).lower(), "message": message}, timeout=10
                     )
                 except requests.RequestException:
                     pass
@@ -98,7 +116,7 @@ def main():
             print("\nMIRA PC agent stopped.")
             return
         except Exception as exc:
-            print(f"[MIRA-PC] Error: {type(exc).__name__}")
+            print(f"[MIRA-PC] Error: {type(exc).__name__}: {exc}")
         time.sleep(POLL_SECONDS)
 
 
